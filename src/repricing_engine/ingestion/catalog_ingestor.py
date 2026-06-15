@@ -1,8 +1,9 @@
 """Ingestor for the client's own product catalog CSV."""
 
+from decimal import Decimal
 from pathlib import Path
 
-from repricing_engine.exceptions import IngestionError
+from repricing_engine.exceptions import IngestionError, NormalizationError
 from repricing_engine.ingestion.base import BaseIngestor, read_csv_rows
 from repricing_engine.models.enums import Market
 from repricing_engine.models.product import CatalogProduct
@@ -11,6 +12,7 @@ from repricing_engine.normalization.identifiers import (
     normalize_gtin,
     normalize_sku,
 )
+from repricing_engine.normalization.price import normalize_price
 
 
 class CatalogIngestor(BaseIngestor[CatalogProduct]):
@@ -29,6 +31,9 @@ class CatalogIngestor(BaseIngestor[CatalogProduct]):
         "title": ("title", "name", "product_name", "titolo"),
         "category": ("category", "categoria", "cat"),
         "market": ("market", "country", "mercato"),
+        "price": ("price", "our_price", "sell_price", "prezzo"),
+        "cogs": ("cogs", "cost", "our_cogs", "costo"),
+        "currency": ("currency", "valuta"),
     }
 
     def __init__(self, default_market: Market = Market.IT) -> None:
@@ -71,6 +76,8 @@ class CatalogIngestor(BaseIngestor[CatalogProduct]):
                 if key.lower() not in mapped_keys and value != ""
             }
 
+            market = self._resolve_market(self._first(lowered, "market"))
+            currency = (self._first(lowered, "currency") or "").strip().upper() or None
             products.append(
                 CatalogProduct(
                     sku=sku,
@@ -79,11 +86,26 @@ class CatalogIngestor(BaseIngestor[CatalogProduct]):
                     brand=brand,
                     title=title,
                     category=(self._first(lowered, "category") or "").strip(),
-                    market=self._resolve_market(self._first(lowered, "market")),
+                    market=market,
+                    price=self._money(lowered, "price", currency or "EUR", market),
+                    cogs=self._money(lowered, "cogs", currency or "EUR", market),
+                    currency=currency,
                     attributes=attributes,
                 )
             )
         return products
+
+    def _money(
+        self, row: dict[str, str], field: str, currency: str, market: Market
+    ) -> Decimal | None:
+        """Parse an optional money field, returning ``None`` if absent/unparseable."""
+        raw = self._first(row, field)
+        if raw is None:
+            return None
+        try:
+            return normalize_price(raw, currency, market)
+        except NormalizationError:
+            return None
 
     def _first(self, row: dict[str, str], field: str) -> str | None:
         """Return the first present source value for a logical ``field``."""

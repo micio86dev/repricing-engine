@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from repricing_engine.models.enums import Market, MatchMethod
+from repricing_engine.models.enums import Availability, Market, MatchMethod
 
 
 class CatalogProduct(BaseModel):
@@ -20,6 +20,9 @@ class CatalogProduct(BaseModel):
     market: Market
     ean: str | None = None
     gtin: str | None = None
+    price: Decimal | None = None  # our selling price (for position / suggested_price)
+    cogs: Decimal | None = None  # our cost of goods sold (price floor)
+    currency: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -40,6 +43,9 @@ class CompetitorProduct(BaseModel):
     sku: str | None = None
     brand: str | None = None
     shipping_cost: Decimal | None = None
+    availability: Availability = Availability.UNKNOWN
+    seller: str | None = None  # competitor/retailer display name
+    scraped_at: str | None = None  # when this offer was captured
     raw_data: dict[str, Any] = Field(default_factory=dict)
 
 

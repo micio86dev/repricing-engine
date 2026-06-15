@@ -9,11 +9,13 @@ from rich.table import Table
 
 from repricing_engine.config import Settings
 from repricing_engine.exceptions import RepricingError
+from repricing_engine.ingestion.base import read_csv_rows
 from repricing_engine.ingestion.catalog_ingestor import CatalogIngestor
 from repricing_engine.ingestion.oxylabs_ingestor import OxyLabsIngestor
 from repricing_engine.matching.pipeline import MatchingPipeline
 from repricing_engine.models.enums import Market
-from repricing_engine.output.csv_writer import CsvWriter
+from repricing_engine.normalization.market import detect_market
+from repricing_engine.output.landscape_writer import LandscapeCsvWriter
 from repricing_engine.utils.logging import setup_logging
 
 app = typer.Typer(
@@ -55,7 +57,12 @@ def match(
         ),
     ],
     output: Annotated[Path, typer.Option(help="Output path")] = Path("output/results.csv"),
-    market: Annotated[str, typer.Option(help="Market code (IT, DE, FR, ES...)")] = "IT",
+    market: Annotated[
+        str | None,
+        typer.Option(
+            help="Market code (IT, DE, FR, ES...); auto-detected from the data if omitted"
+        ),
+    ] = None,
     skip_ai: Annotated[bool, typer.Option("--skip-ai", help="Skip AI quality gate layer")] = False,
     min_confidence: Annotated[float, typer.Option(help="Minimum confidence threshold")] = 0.60,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Verbose logging")] = False,
@@ -63,9 +70,14 @@ def match(
     """Match a catalog against competitor products and write a results CSV."""
     settings = Settings()
     setup_logging("DEBUG" if verbose else settings.log_level)
-    market_enum = _parse_market(market)
 
     try:
+        if market is None:
+            market_enum = detect_market(read_csv_rows(catalog), read_csv_rows(competitors))
+            console.print(f"Auto-detected market: [bold]{market_enum}[/bold]")
+        else:
+            market_enum = _parse_market(market)
+
         catalog_products = CatalogIngestor(default_market=market_enum).ingest(catalog)
         competitor_products = OxyLabsIngestor(default_market=market_enum).ingest(competitors)
 
@@ -81,7 +93,7 @@ def match(
             min_confidence=min_confidence,
         )
         results = pipeline.run(catalog_products, competitor_products)
-        stats = CsvWriter().write(results, output)
+        stats = LandscapeCsvWriter().write(results, output)
     except RepricingError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -98,11 +110,15 @@ def _print_summary(stats: dict[str, object], output: Path) -> None:
     table.add_row("Total products", str(stats.get("total_products")))
     table.add_row("Matched products", str(stats.get("matched_products")))
     table.add_row("Match rate", f"{stats.get('match_rate_pct')}%")
+    table.add_row("Total competitor offers", str(stats.get("total_offers")))
+    table.add_row("Avg offers / matched", str(stats.get("avg_offers_per_matched")))
     table.add_row("Confidence distribution", str(stats.get("confidence_distribution")))
     table.add_row("Match method distribution", str(stats.get("match_method_distribution")))
 
     console.print(table)
-    console.print(f"Results written to [bold]{output}[/bold]")
+    summary_path = output.with_name(f"{output.stem}_summary.csv")
+    console.print(f"Offer rows written to [bold]{output}[/bold]")
+    console.print(f"Per-product summary written to [bold]{summary_path}[/bold]")
 
 
 if __name__ == "__main__":
