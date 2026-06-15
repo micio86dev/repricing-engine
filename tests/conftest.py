@@ -1,7 +1,8 @@
 """Shared pytest fixtures and lightweight test doubles."""
 
 import json
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -141,6 +142,38 @@ def dirty_catalog_path() -> Path:
 @pytest.fixture
 def dirty_oxylabs_path() -> Path:
     return FIXTURES_DIR / "dirty_oxylabs_export.csv"
+
+
+# Datastore connection env vars overwritten with obviously-fake sandbox values
+# for the whole test session. The MVP is CSV-only, but this guarantees the suite
+# can never reach a production (or any real) database once one is introduced.
+_SANDBOX_DATASTORE_ENV = {
+    "DATABASE_URL": "sqlite:///:memory:",
+    "DB_URL": "sqlite:///:memory:",
+    "POSTGRES_URL": "sqlite:///:memory:",
+    "MONGODB_URI": "mongodb://localhost:27017/test_sandbox",
+    "REDIS_URL": "redis://localhost:6379/15",
+}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _block_production_datastores() -> Iterator[None]:
+    """Hard guard: tests must never read or write a production datastore.
+
+    Overwrites any inherited datastore connection env vars with local sandbox
+    values for the session, then restores them, so a real store cannot be
+    reached even if the engine later grows a database layer.
+    """
+    saved = {key: os.environ.get(key) for key in _SANDBOX_DATASTORE_ENV}
+    os.environ.update(_SANDBOX_DATASTORE_ENV)
+    try:
+        yield
+    finally:
+        for key, previous in saved.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
 
 
 @pytest.fixture
