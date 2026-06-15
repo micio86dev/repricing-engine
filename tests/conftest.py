@@ -1,6 +1,7 @@
 """Shared pytest fixtures and lightweight test doubles."""
 
 import json
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 
@@ -77,6 +78,38 @@ class FakeGroqClient:
         self.chat = _FakeChat(self.completions)
 
 
+class _PredicateCompletions:
+    def __init__(self, decide: Callable[[str], bool]) -> None:
+        self._decide = decide
+        self.call_count = 0
+
+    def create(self, **kwargs: object) -> _FakeCompletion:
+        self.call_count += 1
+        messages = kwargs["messages"]
+        prompt = messages[-1]["content"]  # type: ignore[index]
+        is_match = self._decide(prompt)
+        payload = {
+            "is_match": is_match,
+            "confidence_adjustment": 0.0 if is_match else -0.3,
+            "reason": "stubbed verdict",
+        }
+        return _FakeCompletion(json.dumps(payload))
+
+
+class PredicateGroqClient:
+    """Groq double whose verdict depends on the prompt content.
+
+    ``decide(prompt) -> bool`` decides whether the candidate is a real match;
+    rejected candidates receive a ``-0.3`` confidence adjustment. Lets tests
+    simulate an AI gate that rejects, e.g., an accessory that happens to share a
+    product's EAN, without any network call.
+    """
+
+    def __init__(self, decide: Callable[[str], bool]) -> None:
+        self.completions = _PredicateCompletions(decide)
+        self.chat = _FakeChat(self.completions)
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
@@ -98,6 +131,16 @@ def sample_oxylabs_path() -> Path:
 @pytest.fixture
 def expected_output_path() -> Path:
     return FIXTURES_DIR / "expected_output.csv"
+
+
+@pytest.fixture
+def dirty_catalog_path() -> Path:
+    return FIXTURES_DIR / "dirty_catalog.csv"
+
+
+@pytest.fixture
+def dirty_oxylabs_path() -> Path:
+    return FIXTURES_DIR / "dirty_oxylabs_export.csv"
 
 
 @pytest.fixture
