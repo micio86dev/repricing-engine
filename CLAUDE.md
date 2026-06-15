@@ -53,6 +53,7 @@ oxylabs.csv → OxyLabsIngestor → [CompetitorProduct]
 - **Types:** Full type annotations on all public functions. Use Pydantic models for data.
 - **SOLID:** Single responsibility per module. Depend on abstractions (ABC for layers/ingestors). Open for extension (new layers, new ingestors via subclassing).
 - **Testing:** TDD — write failing test first, then implement. Minimum 80% coverage.
+- **Test isolation:** Tests MUST NOT touch any external/production system — no writes to a primary/production database, no live network. Write only to pytest's `tmp_path`; inject stubs for heavy deps (encoder, Groq). A session-autouse guard in `tests/conftest.py` overwrites datastore env vars (`DATABASE_URL`, …) with sandbox values so a real store can never be reached, even once a DB is added.
 - **Error handling:** Never silently swallow exceptions. Use custom exception classes in `exceptions.py`.
 - **Git:** Git Flow. Branches: `feature/xxx`, `fix/xxx`. Conventional Commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
 - **No mutable global state.** Pass config via dependency injection.
