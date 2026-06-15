@@ -1,0 +1,14 @@
+product_id;title;brand;ean;sku;price;currency;shipping;url
+OXY-201;Apple iPhone 14 128GB Midnight;Apple;4006381900003;APL-IPH14-128;899,00;EUR;0,00;https://shop.example.com/p/oxy-201
+OXY-202;Sony WH-1000XM5 Cuffie Bluetooth;Sony;8000000900005;;349,00;EUR;0,00;https://shop.example.com/p/oxy-202
+OXY-203;Cover trasparente per iPhone 14 (compatibile 128GB);Apple;4006381900003;;12,99;EUR;2,99;https://shop.example.com/p/oxy-203
+OXY-204;Pellicola vetro temperato per Galaxy S22;Samsung;5901234900003;;6,99;EUR;1,99;https://shop.example.com/p/oxy-204
+OXY-205;Apple iPhone 14 Pro 128GB Deep Purple;Apple;;APL-IPH14P-256;1099,00;EUR;0,00;https://shop.example.com/p/oxy-205
+OXY-206;XPS 15 9520 Intel i9 32GB portatile;Dell;;;1999,00;EUR;0,00;https://shop.example.com/p/oxy-206
+OXY-207;Nikon Z8 corpo macchina mirrorless;Nikon;;;3699,00;EUR;0,00;https://shop.example.com/p/oxy-207
+OXY-208;Nikon Z9 corpo macchina mirrorless;Nikon;;;5499,00;EUR;0,00;https://shop.example.com/p/oxy-208
+OXY-209;Logitech MX Master 3S Mouse Wireless;Logitech;;LOG-MX3S;89,00;EUR;3,50;https://shop.example.com/p/oxy-209
+OXY-210;Philips Hue Lampadina E27 White;Philips;8056789900002;;13,49;EUR;2,99;https://shop.example.com/p/oxy-210
+OXY-211;LG OLED65C3 Smart TV 65 pollici;LG;8067890900003;;1790,00;EUR;0,00;https://shop.example.com/p/oxy-211
+OXY-212;Cavo USB-C generico 2m ricarica rapida;Anker;;;9,99;EUR;2,00;https://shop.example.com/p/oxy-212
+OXY-213;Bosch SMS4 Lavastoviglie 60cm;Bosch;;;429,00;EUR;19,90;https://shop.example.com/p/oxy-213
