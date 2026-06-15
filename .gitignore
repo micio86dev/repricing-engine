@@ -1,0 +1,42 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[oc]
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+
+# Packaging
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
+
+# Tooling caches
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Project output
+output/
+
+# Claude Code skills are user-local
+.claude/skills/

@@ -1,0 +1,67 @@
+[project]
+name = "repricing-engine"
+version = "0.1.0"
+description = "Intelligent repricing engine with multi-layer product matching and AI quality gate"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Micio Dev", email = "micio86dev@gmail.com" }
+]
+dependencies = [
+    "groq>=1.4.0",
+    "httpx>=0.28.1",
+    "polars>=1.41.2",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "rapidfuzz>=3.14.5",
+    "rich>=15.0.0",
+    "sentence-transformers>=5.5.1",
+    "tenacity>=9.1.4",
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+repricing = "repricing_engine.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.17",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I", "N", "S", "T20", "ANN", "C4", "DTZ", "PIE", "RET", "TCH"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use `assert` (S101) and don't need full annotations (ANN).
+"tests/**" = ["S101", "ANN"]
+
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic evaluates annotations at runtime, so their imports must stay importable.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=src/repricing_engine --cov-report=term-missing"
+markers = [
+    "integration: end-to-end tests that may download models or hit the network",
+]

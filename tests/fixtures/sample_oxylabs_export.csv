@@ -1,0 +1,28 @@
+product_id;title;brand;ean;sku;price;currency;shipping;url
+OXY-001;Apple iPhone 13 128 GB Blue;Apple;4006381333931;APL-IPH13-128;789,00;EUR;0,00;https://shop.example.com/p/oxy-001
+OXY-002;Galaxy S21 5G 128GB Phantom Gray;Samsung;5901234123457;SAM-GAL-S21;599,90;EUR;4,99;https://shop.example.com/p/oxy-002
+OXY-003;Sony WH-1000XM4 Headphones;Sony;8000000000170;;279,00;EUR;0,00;https://shop.example.com/p/oxy-003
+OXY-004;HP LaserJet Pro M404dn;HP;8000000001238;HP-LJ-M404;229,99;EUR;9,90;https://shop.example.com/p/oxy-004
+OXY-005;Dell XPS 13 9310 i7;Dell;8012345000111;;1.299,00;EUR;0,00;https://shop.example.com/p/oxy-005
+OXY-006;Lenovo ThinkPad X1 Carbon G9;Lenovo;8023456000228;LEN-TP-X1C9;1.499,00;EUR;0,00;https://shop.example.com/p/oxy-006
+OXY-007;Logitech MX Master 3S;Logitech;8034567000335;;99,90;EUR;3,50;https://shop.example.com/p/oxy-007
+OXY-008;Bosch SMS46 Lavastoviglie;Bosch;8045678000442;;549,00;EUR;19,90;https://shop.example.com/p/oxy-008
+OXY-009;Philips Hue White E27;Philips;8056789000559;PHI-HUE-E27;14,99;EUR;2,99;https://shop.example.com/p/oxy-009
+OXY-010;LG OLED55C1 TV 55;LG;8067890000666;;1.190,00;EUR;0,00;https://shop.example.com/p/oxy-010
+OXY-011;Asus ROG Strix G15;Asus;8078901000773;ASU-ROG-G15;1.349,00;EUR;0,00;https://shop.example.com/p/oxy-011
+OXY-012;Acer Swift 3 SF314;Acer;8089012000880;;699,00;EUR;0,00;https://shop.example.com/p/oxy-012
+OXY-013;Canon EOS R6 Body;Canon;8090123000997;;2.299,00;EUR;0,00;https://shop.example.com/p/oxy-013
+OXY-014;Nikon Z6 II Body;Nikon;8101234000100;NIK-Z6II;1.899,00;EUR;0,00;https://shop.example.com/p/oxy-014
+OXY-015;Apple MacBook Air M2 256GB;Apple;8112345000217;;1.199,00;EUR;0,00;https://shop.example.com/p/oxy-015
+OXY-016;Samsung QLED Q80 65;Samsung;8123456000324;;1.099,00;EUR;0,00;https://shop.example.com/p/oxy-016
+OXY-017;Sony PlayStation 5;Sony;8134567000431;;499,99;EUR;0,00;https://shop.example.com/p/oxy-017
+OXY-018;HP Spectre x360 14;HP;8145678000548;;1.399,00;EUR;0,00;https://shop.example.com/p/oxy-018
+OXY-019;Dell Alienware m15 R6;Dell;8156789000655;;1.799,00;EUR;0,00;https://shop.example.com/p/oxy-019
+OXY-020;Logitech G502 Hero;Logitech;8167890000762;LOG-G502;39,90;EUR;3,50;https://shop.example.com/p/oxy-020
+OXY-021;Philips OLED807 48;Philips;8178901000879;;1.290,00;EUR;0,00;https://shop.example.com/p/oxy-021
+OXY-022;LG Gram 17;LG;8189012000986;;1.499,00;EUR;0,00;https://shop.example.com/p/oxy-022
+OXY-023;Asus Zenbook S13 OLED;Asus;8190123001090;;1.199,00;EUR;0,00;https://shop.example.com/p/oxy-023
+OXY-024;Bosch WAU28 Lavatrice;Bosch;8201234001104;;649,00;EUR;29,90;https://shop.example.com/p/oxy-024
+OXY-101;iPhone 13 Compatible Case Bundle;Fakezon;4006381333931;;19,99;EUR;0,00;https://shop.example.com/p/oxy-101
+OXY-102;Samsung Galaxy S21 Refurbished;Samsung;;SAMGALS21;479,00;EUR;5,00;https://shop.example.com/p/oxy-102
+OXY-103;Generic USB-C Cable 2m;Anker;;;9,99;EUR;2,00;https://shop.example.com/p/oxy-103
