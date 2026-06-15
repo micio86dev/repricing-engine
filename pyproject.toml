@@ -39,6 +39,9 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Mark both the package root and the project root as first-party so import
+# sorting (I001) is deterministic regardless of where ruff runs (local vs CI).
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "N", "S", "T20", "ANN", "C4", "DTZ", "PIE", "RET", "TCH"]
