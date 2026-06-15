@@ -1,5 +1,7 @@
 # Repricing Engine
 
+[![CI](https://github.com/micio86dev/repricing-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/micio86dev/repricing-engine/actions/workflows/ci.yml)
+
 > Intelligent repricing / price-monitoring engine for e-commerce — multi-layer product matching with an AI quality gate.
 
 A CLI MVP that takes a product catalog and a competitor (OxyLabs) export, runs a four-layer
