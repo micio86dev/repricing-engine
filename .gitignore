@@ -35,8 +35,8 @@ htmlcov/
 # OS
 .DS_Store
 
-# Project output
-output/
+# Project output (repo-root only; must not match src/repricing_engine/output/)
+/output/
 
 # Claude Code skills are user-local
 .claude/skills/
