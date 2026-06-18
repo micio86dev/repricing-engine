@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 
@@ -14,6 +15,9 @@ from repricing_engine.models.enums import Market
 from repricing_engine.models.product import CatalogProduct, CompetitorProduct
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+# Type aliases for the mock-HTTP helpers below.
+HttpHandler = Callable[[httpx.Request], httpx.Response]
 
 
 # --------------------------------------------------------------------------- #
@@ -117,6 +121,47 @@ class PredicateGroqClient:
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES_DIR
+
+
+@pytest.fixture
+def fixture_text() -> Callable[[str], str]:
+    """Return a reader for a fixture file's text (UTF-8)."""
+
+    def _read(name: str) -> str:
+        return (FIXTURES_DIR / name).read_text(encoding="utf-8")
+
+    return _read
+
+
+@pytest.fixture
+def mock_async_client() -> Callable[[HttpHandler], httpx.AsyncClient]:
+    """Build an ``httpx.AsyncClient`` backed by a ``MockTransport`` (no network).
+
+    The returned client is *not* entered; use it with ``async with`` so it is
+    closed cleanly. Tests pass a handler ``(httpx.Request) -> httpx.Response``.
+    """
+
+    def _build(handler: HttpHandler) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    return _build
+
+
+@pytest.fixture
+def route_handler() -> Callable[..., HttpHandler]:
+    """Build a handler that maps a URL substring to an ``httpx.Response``."""
+
+    def _build(routes: dict[str, httpx.Response], default_status: int = 404) -> HttpHandler:
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            for needle, response in routes.items():
+                if needle in url:
+                    return response
+            return httpx.Response(default_status, text="not found")
+
+        return handler
+
+    return _build
 
 
 @pytest.fixture

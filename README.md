@@ -53,6 +53,40 @@ across multiple signals and uses an LLM as the final arbiter for ambiguous cases
 Each layer emits `MatchCandidate`s with a confidence score and an explanation. The pipeline keeps
 all candidates (matched and rejected) so results are auditable.
 
+### Finding more competitors — multi-source fetching & PDP verification (opt-in)
+
+A single static CSV usually surfaces too few competitors. Two **opt-in** stages wrap the matcher
+(both off by default — the CSV-only flow above is unchanged):
+
+- **`--fetch` — source fetching.** Discover competitor URLs via free providers run concurrently
+  then deduplicated: **SearXNG** (primary, self-hosted metasearch), **TrovaPrezzi** (IT-only
+  comparison pages), **DuckDuckGo** (HTML-endpoint fallback), and a **CSV file** provider.
+- **`--verify-pdp` — page verification.** Visit each candidate's product page and confirm the
+  EAN/GTIN/SKU is really on it, reading the *real* price, shipping, and stock. A cheap→expensive
+  cascade keeps cost down: **regex + JSON-LD (free)** first, **Groq AI extraction** only as a last
+  resort. This is what turns the `PDP·GTIN` / `PDP·SKU` confidence labels from heuristics into facts.
+
+```
+ catalog ─► csv_pool ─┐
+                      ├─(--fetch)─► SourceFetcher ─► more competitors
+                      ▼
+        EnhancedPipeline ─ per product ─► MatchingPipeline (Layer 1→4)
+                      ▼
+        (--verify-pdp) PdpVerifier:  fetch ─► IDs/JSON-LD (free) ─► AI (last resort)
+                      ▼
+                 LandscapeCsvWriter ─► output.csv  (+ _summary, + _stats)
+```
+
+#### SearXNG quick start (free, self-hosted)
+
+```bash
+docker run --rm -d -p 8888:8080 searxng/searxng
+# then in .env:  SEARXNG_BASE_URL=http://localhost:8888
+```
+
+If `SEARXNG_BASE_URL` is empty, SearXNG is skipped with a one-line hint and the other providers
+still run. With no provider available, `--fetch` degrades gracefully to the CSV-only result.
+
 ## Quick Start
 
 ### Prerequisites
@@ -98,7 +132,35 @@ uv run repricing match \
   --skip-ai
 ```
 
+### Four usage modes
+
+```bash
+# 1) CSV-only (default, fully offline) — unchanged classic behavior
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv
+
+# 2) CSV + discover more competitors online
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv --fetch
+
+# 3) CSV + verify each candidate's product page (real price/shipping/stock)
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv --verify-pdp
+
+# 4) Online-only — no CSV; discover and verify everything
+uv run repricing match --catalog catalog.csv --fetch --verify-pdp
+```
+
+`--max-pdp-per-product` (default 15) caps how many pages are verified per product. The optional
+Playwright JS-rendering fallback: `uv sync --extra playwright && uv run playwright install chromium`,
+then set `PDP_PLAYWRIGHT_ENABLED=true`.
+
 See all options with `uv run repricing match --help`.
+
+### Output
+
+`output/results.csv` has one row per confirmed offer; `output/results_summary.csv` aggregates per
+product (competitor count, min/median/max landed price, our position, suggested price floored at
+COGS); `output/results_stats.csv` holds run-level stats. Alongside the existing offer columns, the
+schema carries the verification fields (blank in CSV-only mode): `confirmation_method`,
+`pdp_verified`, `source_provider`, `extraction_method`, `shipping_note`.
 
 ## Testing
 
@@ -126,8 +188,20 @@ src/repricing_engine/
 ├── matching/
 │   ├── pipeline.py     # cascade orchestrator
 │   ├── scoring.py      # confidence → level
+│   ├── classification.py  # match-tier / confirmation labels
 │   └── layers/         # exact_id, sku_brand, semantic, ai_quality_gate
-├── output/             # CSV writer
+├── sources/            # (--fetch) source fetching
+│   ├── orchestrator.py # SourceFetcher (concurrent + dedupe)
+│   ├── deduplicator.py # URL/domain dedup
+│   ├── mapper.py       # RawSearchResult → CompetitorProduct
+│   └── providers/      # searxng, trovaprezzi, duckduckgo, csv_file
+├── pdp/                # (--verify-pdp) page verification
+│   ├── verifier.py     # cheap→expensive cascade
+│   ├── fetcher.py      # httpx → optional Playwright
+│   ├── identifier_finder.py  # regex + meta + JSON-LD (free)
+│   └── extractor.py    # Groq AI extraction (last resort)
+├── orchestration/      # EnhancedPipeline (async bridge)
+├── output/             # landscape CSV writer
 └── utils/              # logging
 tests/                  # unit + integration + fixtures
 ```

@@ -1,8 +1,12 @@
 """Typer CLI entrypoint for the repricing engine."""
 
-from pathlib import Path
-from typing import Annotated
+from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
+
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -15,8 +19,13 @@ from repricing_engine.ingestion.oxylabs_ingestor import OxyLabsIngestor
 from repricing_engine.matching.pipeline import MatchingPipeline
 from repricing_engine.models.enums import Market
 from repricing_engine.normalization.market import detect_market
+from repricing_engine.orchestration.enhanced_pipeline import EnhancedPipeline
 from repricing_engine.output.landscape_writer import LandscapeCsvWriter
 from repricing_engine.utils.logging import setup_logging
+
+if TYPE_CHECKING:
+    from repricing_engine.models.match_result import MatchResult
+    from repricing_engine.models.product import CatalogProduct, CompetitorProduct
 
 app = typer.Typer(
     help="Intelligent repricing engine — multi-layer product matching.",
@@ -48,14 +57,14 @@ def match(
         typer.Option(help="Path to catalog CSV", exists=True, dir_okay=False, readable=True),
     ],
     competitors: Annotated[
-        Path,
+        Path | None,
         typer.Option(
-            help="Path to OxyLabs/competitors CSV",
+            help="Path to OxyLabs/competitors CSV (optional when --fetch is used)",
             exists=True,
             dir_okay=False,
             readable=True,
         ),
-    ],
+    ] = None,
     output: Annotated[Path, typer.Option(help="Output path")] = Path("output/results.csv"),
     market: Annotated[
         str | None,
@@ -65,6 +74,17 @@ def match(
     ] = None,
     skip_ai: Annotated[bool, typer.Option("--skip-ai", help="Skip AI quality gate layer")] = False,
     min_confidence: Annotated[float, typer.Option(help="Minimum confidence threshold")] = 0.60,
+    fetch: Annotated[
+        bool,
+        typer.Option("--fetch", help="Discover more competitors via free search providers"),
+    ] = False,
+    verify_pdp: Annotated[
+        bool,
+        typer.Option("--verify-pdp", help="Visit product pages to confirm IDs and real prices"),
+    ] = False,
+    max_pdp_per_product: Annotated[
+        int, typer.Option(help="Max product pages to verify per catalog product")
+    ] = 15,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Verbose logging")] = False,
 ) -> None:
     """Match a catalog against competitor products and write a results CSV."""
@@ -72,33 +92,88 @@ def match(
     setup_logging("DEBUG" if verbose else settings.log_level)
 
     try:
-        if market is None:
-            market_enum = detect_market(read_csv_rows(catalog), read_csv_rows(competitors))
-            console.print(f"Auto-detected market: [bold]{market_enum}[/bold]")
-        else:
-            market_enum = _parse_market(market)
-
+        market_enum = _resolve_market(market, catalog, competitors)
         catalog_products = CatalogIngestor(default_market=market_enum).ingest(catalog)
-        competitor_products = OxyLabsIngestor(default_market=market_enum).ingest(competitors)
+        csv_pool = (
+            OxyLabsIngestor(default_market=market_enum).ingest(competitors) if competitors else []
+        )
+        if not csv_pool and not fetch:
+            console.print(
+                "[yellow]No competitors CSV and --fetch not set: there is nothing to match "
+                "against.[/yellow]"
+            )
 
         console.print(
             f"Loaded [bold]{len(catalog_products)}[/bold] catalog products and "
-            f"[bold]{len(competitor_products)}[/bold] competitor products "
-            f"(market {market_enum})."
+            f"[bold]{len(csv_pool)}[/bold] competitor products (market {market_enum})."
         )
+        if fetch or verify_pdp:
+            console.print(
+                f"Online mode: fetch=[bold]{fetch}[/bold], verify-pdp=[bold]{verify_pdp}[/bold]."
+            )
 
-        pipeline = MatchingPipeline(
-            settings,
-            skip_ai=skip_ai,
-            min_confidence=min_confidence,
-        )
-        results = pipeline.run(catalog_products, competitor_products)
+        pipeline = MatchingPipeline(settings, skip_ai=skip_ai, min_confidence=min_confidence)
+        if fetch or verify_pdp:
+            results = asyncio.run(
+                _run_enhanced(
+                    settings,
+                    pipeline,
+                    catalog_products,
+                    csv_pool,
+                    market_enum,
+                    fetch=fetch,
+                    verify_pdp=verify_pdp,
+                    max_pdp_per_product=max_pdp_per_product,
+                )
+            )
+        else:
+            results = pipeline.run(catalog_products, csv_pool)
         stats = LandscapeCsvWriter().write(results, output)
     except RepricingError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
     _print_summary(stats, output)
+
+
+def _resolve_market(market: str | None, catalog: Path, competitors: Path | None) -> Market:
+    """Resolve the market from ``--market`` or auto-detect it from the data."""
+    if market is not None:
+        return _parse_market(market)
+    competitor_rows = read_csv_rows(competitors) if competitors else None
+    detected = detect_market(read_csv_rows(catalog), competitor_rows)
+    console.print(f"Auto-detected market: [bold]{detected}[/bold]")
+    return detected
+
+
+async def _run_enhanced(
+    settings: Settings,
+    pipeline: MatchingPipeline,
+    catalog_products: list[CatalogProduct],
+    csv_pool: list[CompetitorProduct],
+    market: Market,
+    *,
+    fetch: bool,
+    verify_pdp: bool,
+    max_pdp_per_product: int,
+) -> list[MatchResult]:
+    """Run the async fetch/verify pipeline within a shared HTTP client lifecycle."""
+    async with httpx.AsyncClient() as client:
+        enhanced = EnhancedPipeline.build(
+            settings,
+            client,
+            matching_pipeline=pipeline,
+            fetch=fetch,
+            verify_pdp=verify_pdp,
+        )
+        return await enhanced.run(
+            catalog_products,
+            csv_pool=csv_pool,
+            market=market,
+            fetch=fetch,
+            verify_pdp=verify_pdp,
+            max_pdp_per_product=max_pdp_per_product,
+        )
 
 
 def _print_summary(stats: dict[str, object], output: Path) -> None:
@@ -112,6 +187,8 @@ def _print_summary(stats: dict[str, object], output: Path) -> None:
     table.add_row("Match rate", f"{stats.get('match_rate_pct')}%")
     table.add_row("Total competitor offers", str(stats.get("total_offers")))
     table.add_row("Avg offers / matched", str(stats.get("avg_offers_per_matched")))
+    table.add_row("Offers with shipping", str(stats.get("offers_with_shipping")))
+    table.add_row("PDP-verified offers", str(stats.get("offers_pdp_verified")))
     table.add_row("Confidence distribution", str(stats.get("confidence_distribution")))
     table.add_row("Match method distribution", str(stats.get("match_method_distribution")))
 

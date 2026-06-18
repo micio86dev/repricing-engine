@@ -17,7 +17,11 @@ from urllib.parse import urlparse
 
 import polars as pl
 
-from repricing_engine.matching.classification import confidence_tier_for, match_field_for
+from repricing_engine.matching.classification import (
+    confidence_tier_for,
+    confirmation_method_for,
+    match_field_for,
+)
 from repricing_engine.models.enums import Availability
 from repricing_engine.output.csv_writer import CsvWriter
 
@@ -47,6 +51,12 @@ RAW_COLUMNS: tuple[str, ...] = (
     "in_stock",
     "source",
     "scraped_at",
+    # Appended for multi-source / PDP verification (blank in the CSV-only path).
+    "confirmation_method",
+    "pdp_verified",
+    "source_provider",
+    "extraction_method",
+    "shipping_note",
 )
 # Derived per-product summary columns.
 SUMMARY_COLUMNS: tuple[str, ...] = (
@@ -85,10 +95,33 @@ def _domain(url: str) -> str:
     return netloc[4:] if netloc.startswith("www.") else netloc
 
 
-def _landed(candidate: MatchCandidate) -> Decimal:
-    """Shipping-inclusive price of a candidate's competitor offer."""
+def _landed(candidate: MatchCandidate) -> Decimal | None:
+    """Shipping-inclusive price of a candidate's offer, or ``None`` if unpriced."""
     competitor = candidate.competitor_product
+    if competitor.price is None:
+        return None
     return competitor.price + (competitor.shipping_cost or Decimal("0"))
+
+
+def _landed_sort_key(candidate: MatchCandidate) -> tuple[bool, Decimal]:
+    """Sort key placing priced offers (cheapest first) before unpriced ones."""
+    landed = _landed(candidate)
+    return (landed is None, landed if landed is not None else Decimal("0"))
+
+
+def _pdp_verified_label(candidate: MatchCandidate) -> str:
+    """``yes`` / ``no`` when PDP ran for this candidate, else blank."""
+    verified = candidate.match_details.get("pdp_verified")
+    if verified is None:
+        return ""
+    return "yes" if verified else "no"
+
+
+def _shipping_note(shipping_cost: Decimal | None) -> str:
+    """A human note for the shipping column: ``free`` / ``unknown`` / blank."""
+    if shipping_cost is None:
+        return "unknown"
+    return "free" if shipping_cost == 0 else ""
 
 
 class LandscapeCsvWriter:
@@ -127,24 +160,32 @@ class LandscapeCsvWriter:
             return [row]
 
         rows: list[dict[str, str]] = []
-        for candidate in sorted(result.all_candidates, key=_landed):
+        for candidate in sorted(result.all_candidates, key=_landed_sort_key):
             competitor = candidate.competitor_product
+            landed = _landed(candidate)
             row = dict(base)
             row.update(
                 {
                     "competitor_name": competitor.seller or competitor.source,
                     "competitor_domain": _domain(competitor.url),
                     "competitor_url": competitor.url,
-                    "competitor_price": _q(competitor.price),
+                    "competitor_price": "" if competitor.price is None else _q(competitor.price),
                     "competitor_shipping": (
                         "" if competitor.shipping_cost is None else _q(competitor.shipping_cost)
                     ),
-                    "competitor_landed": _q(_landed(candidate)),
+                    "competitor_landed": "" if landed is None else _q(landed),
                     "confidence": confidence_tier_for(candidate),
                     "match_field": match_field_for(candidate),
                     "in_stock": _IN_STOCK_LABELS[competitor.availability],
                     "source": competitor.source,
                     "scraped_at": competitor.scraped_at or "",
+                    "confirmation_method": confirmation_method_for(candidate),
+                    "pdp_verified": _pdp_verified_label(candidate),
+                    "source_provider": competitor.source_provider or "",
+                    "extraction_method": str(
+                        candidate.match_details.get("extraction_method") or ""
+                    ),
+                    "shipping_note": _shipping_note(competitor.shipping_cost),
                 }
             )
             rows.append(row)
@@ -180,9 +221,15 @@ class LandscapeCsvWriter:
         if not result.all_candidates:
             return row
 
-        ordered = sorted(result.all_candidates, key=_landed)
-        landeds = [_landed(c) for c in ordered]
-        cheapest = ordered[0].competitor_product
+        # Only priced offers contribute to the landed-price aggregates.
+        priced = sorted(
+            (c for c in result.all_candidates if _landed(c) is not None),
+            key=_landed_sort_key,
+        )
+        if not priced:
+            return row
+        landeds = [landed for c in priced if (landed := _landed(c)) is not None]
+        cheapest = priced[0].competitor_product
         min_landed = landeds[0]
         row.update(
             {
@@ -207,10 +254,17 @@ class LandscapeCsvWriter:
     def compute_stats(results: list[MatchResult]) -> dict[str, object]:
         """Product-level stats (shared with :class:`CsvWriter`) plus offer counts."""
         stats = CsvWriter.compute_stats(results)
-        total_offers = sum(len(r.all_candidates) for r in results)
+        candidates = [c for r in results for c in r.all_candidates]
+        total_offers = len(candidates)
         matched = stats["matched_products"]
         stats["total_offers"] = total_offers
         stats["avg_offers_per_matched"] = round(total_offers / matched, 2) if matched else 0.0
+        stats["offers_with_shipping"] = sum(
+            1 for c in candidates if c.competitor_product.shipping_cost is not None
+        )
+        stats["offers_pdp_verified"] = sum(
+            1 for c in candidates if c.match_details.get("pdp_verified")
+        )
         return stats
 
     @staticmethod

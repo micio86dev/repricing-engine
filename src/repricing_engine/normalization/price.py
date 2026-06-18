@@ -106,6 +106,29 @@ def _parse_decimal_loose(value: str) -> Decimal | None:
         return None
 
 
+def parse_price_loose(value: str | int | float | Decimal | None) -> Decimal | None:
+    """Best-effort parse of a machine/loose-formatted number, inferring the locale.
+
+    Use this for values that arrive in canonical or near-canonical form (JSON-LD,
+    an LLM extraction, a structured API) rather than a known market's human text:
+    ``789.0`` stays ``789.0`` (not ``7890``), ``789,00`` becomes ``789.00``, and
+    ``1.299,90`` becomes ``1299.90``. Returns ``None`` when unparseable.
+
+    Args:
+        value: The raw value (number or string), possibly ``None``.
+
+    Returns:
+        The parsed :class:`~decimal.Decimal`, or ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int | float):
+        return Decimal(str(value))
+    return _parse_decimal_loose(value)
+
+
 def extract_shipping(raw_data: dict[str, str], source: str) -> Decimal | None:
     """Extract a shipping cost from a source's raw row, if present.
 
