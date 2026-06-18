@@ -18,16 +18,31 @@ import httpx
 from bs4 import BeautifulSoup
 
 from repricing_engine.exceptions import SourceFetchError
+from repricing_engine.models.enums import Market
 from repricing_engine.sources.base import COST_FREE, DEFAULT_USER_AGENT, BaseSourceProvider
 from repricing_engine.sources.models import RawSearchResult
 
 if TYPE_CHECKING:
-    from repricing_engine.models.enums import Market
     from repricing_engine.models.product import CatalogProduct
 
 logger = logging.getLogger(__name__)
 
 _ENDPOINT = "https://html.duckduckgo.com/html/"
+
+# Market -> DuckDuckGo region code (the ``kl`` parameter), so an IT query returns
+# Italian retailers rather than US ones. ``wt-wt`` is DuckDuckGo's "no region".
+_MARKET_REGION: dict[Market, str] = {
+    Market.IT: "it-it",
+    Market.DE: "de-de",
+    Market.FR: "fr-fr",
+    Market.ES: "es-es",
+    Market.NL: "nl-nl",
+    Market.PT: "pt-pt",
+    Market.BE: "be-fr",
+    Market.AT: "at-de",
+    Market.UK: "uk-en",
+    Market.US: "us-en",
+}
 
 
 class DuckDuckGoProvider(BaseSourceProvider):
@@ -72,18 +87,19 @@ class DuckDuckGoProvider(BaseSourceProvider):
         query = " ".join(part for part in (product.brand, product.title) if part).strip()
         if not query:
             return []
-        html = await self._fetch(query)
+        html = await self._fetch(query, market)
         return self._parse(html)
 
-    async def _fetch(self, query: str) -> str:
+    async def _fetch(self, query: str, market: Market) -> str:
         """Fetch the HTML results page, honoring the per-instance rate limit."""
         async with self._lock:
             await self._wait_for_rate_limit()
             headers = {"User-Agent": DEFAULT_USER_AGENT}
+            params = {"q": query, "kl": _MARKET_REGION.get(market, "wt-wt")}
             try:
                 response = await self._client.get(
                     _ENDPOINT,
-                    params={"q": query},
+                    params=params,
                     headers=headers,
                     timeout=self._timeout,
                 )
@@ -115,6 +131,9 @@ class DuckDuckGoProvider(BaseSourceProvider):
             target = self._resolve_url(str(link["href"]))
             if not target:
                 continue
+            domain = urlparse(target).netloc.lower().removeprefix("www.")
+            if "duckduckgo.com" in domain:  # ad / related-search self-links
+                continue
             snippet_el = block.select_one("a.result__snippet, div.result__snippet")
             results.append(
                 RawSearchResult(
@@ -122,7 +141,7 @@ class DuckDuckGoProvider(BaseSourceProvider):
                     title=link.get_text(strip=True),
                     url=target,
                     snippet=snippet_el.get_text(strip=True) if snippet_el else None,
-                    domain=urlparse(target).netloc.lower().removeprefix("www."),
+                    domain=domain,
                     raw_data={},
                 )
             )

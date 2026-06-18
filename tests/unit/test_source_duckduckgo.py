@@ -22,17 +22,27 @@ def _catalog() -> CatalogProduct:
 class TestDuckDuckGo:
     async def test_parses_and_decodes_redirects(self, mock_async_client, fixture_text):
         html = fixture_text("duckduckgo_results.html")
-        client = mock_async_client(lambda request: httpx.Response(200, text=html))
+        captured: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["kl"] = request.url.params.get("kl", "")
+            return httpx.Response(200, text=html)
+
+        client = mock_async_client(handler)
         async with client:
             # rate limit 0 -> no sleeping in tests.
             provider = DuckDuckGoProvider(client, rate_limit_seconds=0.0)
             results = await provider.search(_catalog(), Market.IT)
 
+        # IT market is localized via the region parameter.
+        assert captured["kl"] == "it-it"
         urls = [r.url for r in results]
         assert "https://www.shopgamma.it/iphone-13-128" in urls
         assert "https://store.delta.it/apple/iphone13" in urls
         # No real DuckDuckGo redirect links leak through.
         assert all("duckduckgo.com/l/" not in u for u in urls)
+        # DuckDuckGo self/ad links are filtered out.
+        assert all("duckduckgo.com" not in (r.domain or "") for r in results)
         assert all(r.source_provider == "duckduckgo" for r in results)
 
     async def test_http_error_raises(self, mock_async_client):
