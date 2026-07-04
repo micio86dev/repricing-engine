@@ -19,8 +19,14 @@ from bs4 import BeautifulSoup
 
 from repricing_engine.exceptions import SourceFetchError
 from repricing_engine.models.enums import Market
-from repricing_engine.sources.base import COST_FREE, DEFAULT_USER_AGENT, BaseSourceProvider
+from repricing_engine.sources.base import (
+    COST_FREE,
+    DEFAULT_ACCEPT,
+    DEFAULT_USER_AGENT,
+    BaseSourceProvider,
+)
 from repricing_engine.sources.models import RawSearchResult
+from repricing_engine.sources.snippet_price import extract_price_from_text
 
 if TYPE_CHECKING:
     from repricing_engine.models.product import CatalogProduct
@@ -57,7 +63,7 @@ class DuckDuckGoProvider(BaseSourceProvider):
         *,
         enabled: bool = True,
         rate_limit_seconds: float = 2.0,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 5.0,
     ) -> None:
         """Create the provider.
 
@@ -65,7 +71,8 @@ class DuckDuckGoProvider(BaseSourceProvider):
             client: Injected async HTTP client (tests inject a MockTransport).
             enabled: Master on/off switch from settings.
             rate_limit_seconds: Minimum delay enforced between requests.
-            timeout_seconds: Per-request timeout.
+            timeout_seconds: Per-request timeout (default 5s; DuckDuckGo may be
+                unreachable on some networks).
         """
         self._client = client
         self._enabled = enabled
@@ -83,33 +90,105 @@ class DuckDuckGoProvider(BaseSourceProvider):
         product: CatalogProduct,
         market: Market,
     ) -> list[RawSearchResult]:
-        """Search DuckDuckGo for the product's brand + title."""
-        query = " ".join(part for part in (product.brand, product.title) if part).strip()
-        if not query:
-            return []
-        html = await self._fetch(query, market)
-        return self._parse(html)
+        """Search DuckDuckGo with a brand+title query and a distinctive-SKU query."""
+        results: list[RawSearchResult] = []
+        seen_urls: set[str] = set()
+        for query in self._build_queries(product):
+            html = await self._fetch(query, market)
+            for result in self._parse(html, market):
+                if result.url not in seen_urls:
+                    seen_urls.add(result.url)
+                    results.append(result)
+        return results
+
+    @staticmethod
+    def _build_queries(product: CatalogProduct) -> list[str]:
+        """Build the brand+title and quoted-SKU queries (order-stable, deduped)."""
+        brand = (product.brand or "").strip()
+        queries: list[str] = []
+        broad = " ".join(part for part in (brand, product.title) if part).strip()
+        if broad:
+            queries.append(broad)
+        if product.sku:
+            queries.append(f'{brand} "{product.sku}"'.strip())
+        return list(dict.fromkeys(q for q in queries if q))
 
     async def _fetch(self, query: str, market: Market) -> str:
-        """Fetch the HTML results page, honoring the per-instance rate limit."""
+        """Fetch the HTML results page with retry logic and rate limiting."""
         async with self._lock:
             await self._wait_for_rate_limit()
-            headers = {"User-Agent": DEFAULT_USER_AGENT}
+
+            # Build anti-bot headers
+            headers = {
+                "User-Agent": DEFAULT_USER_AGENT,
+                "Accept": DEFAULT_ACCEPT,
+                "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Referer": "https://html.duckduckgo.com/",
+                "Cache-Control": "max-age=0",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+            }
+
             params = {"q": query, "kl": _MARKET_REGION.get(market, "wt-wt")}
+
+            max_retries = 2  # Minimal retries due to potential network blocking
             try:
-                response = await self._client.get(
-                    _ENDPOINT,
-                    params=params,
-                    headers=headers,
-                    timeout=self._timeout,
-                )
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                msg = f"DuckDuckGo query failed: {exc}"
-                raise SourceFetchError(msg) from exc
+                for attempt in range(max_retries):
+                    try:
+                        # Use separate connect timeout to fail fast on unreachable hosts
+                        timeout = httpx.Timeout(self._timeout, connect=2.0)
+                        response = await self._client.get(
+                            _ENDPOINT,
+                            params=params,
+                            headers=headers,
+                            timeout=timeout,
+                        )
+                        response.raise_for_status()
+                        return response.text
+                    except httpx.HTTPStatusError as exc:
+                        status = exc.response.status_code
+                        if status in (403, 429) and attempt < max_retries - 1:
+                            wait_time = (
+                                2**attempt
+                            )  # exponential backoff (1s, 2s, ... over max_retries)
+                            logger.debug(
+                                "DuckDuckGo %d on attempt %d/%d; retrying after %ds",
+                                status,
+                                attempt + 1,
+                                max_retries,
+                                wait_time,
+                            )
+                            await asyncio.sleep(wait_time)
+                            continue
+                        msg = f"DuckDuckGo query failed: {exc}"
+                        raise SourceFetchError(msg) from exc
+                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                        if attempt < max_retries - 1:
+                            wait_time = (2**attempt) + 1  # backoff (2s, 3s, ... over max_retries)
+                            logger.debug(
+                                "DuckDuckGo connection error on attempt %d/%d; retrying after %ds",
+                                attempt + 1,
+                                max_retries,
+                                wait_time,
+                            )
+                            await asyncio.sleep(wait_time)
+                            continue
+                        msg = f"DuckDuckGo connection failed: {exc}"
+                        raise SourceFetchError(msg) from exc
+                    except httpx.HTTPError as exc:
+                        msg = f"DuckDuckGo query failed: {exc}"
+                        raise SourceFetchError(msg) from exc
+
+                msg = f"DuckDuckGo query failed after {max_retries} attempts"
+                raise SourceFetchError(msg)
             finally:
                 self._last_request_at = monotonic()
-            return response.text
 
     async def _wait_for_rate_limit(self) -> None:
         """Sleep just long enough to respect the minimum inter-request delay."""
@@ -120,7 +199,7 @@ class DuckDuckGoProvider(BaseSourceProvider):
         if remaining > 0:
             await asyncio.sleep(remaining)
 
-    def _parse(self, html: str) -> list[RawSearchResult]:
+    def _parse(self, html: str, market: Market) -> list[RawSearchResult]:
         """Extract organic results from a DuckDuckGo HTML page."""
         soup = BeautifulSoup(html, "lxml")
         results: list[RawSearchResult] = []
@@ -135,12 +214,17 @@ class DuckDuckGoProvider(BaseSourceProvider):
             if "duckduckgo.com" in domain:  # ad / related-search self-links
                 continue
             snippet_el = block.select_one("a.result__snippet, div.result__snippet")
+            title = link.get_text(strip=True)
+            snippet = snippet_el.get_text(strip=True) if snippet_el else None
+            price = extract_price_from_text(" ".join(p for p in (title, snippet) if p), market)
             results.append(
                 RawSearchResult(
                     source_provider=self.name,
-                    title=link.get_text(strip=True),
+                    title=title,
                     url=target,
-                    snippet=snippet_el.get_text(strip=True) if snippet_el else None,
+                    snippet=snippet,
+                    price=price,
+                    currency="EUR" if price is not None else None,
                     domain=domain,
                     raw_data={},
                 )

@@ -1,0 +1,20 @@
+# Local SearXNG metasearch instance — the repricing engine's primary `--fetch`
+# source. It aggregates many engines (Google/Bing/Brave/Qwant/...) server-side,
+# handling their anti-bot measures, and exposes a JSON API the engine consumes.
+#
+# Usage:
+#   docker compose up -d
+#   curl "http://localhost:8888/search?q=geberit&format=json"   # -> 200 JSON
+# then set SEARXNG_BASE_URL=http://localhost:8888 in your .env.
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: repricing-searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      # Read-only: our config replaces the image default; the baked-in uwsgi.ini stays.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/
+    restart: unless-stopped

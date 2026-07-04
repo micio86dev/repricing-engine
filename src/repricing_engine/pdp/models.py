@@ -33,6 +33,10 @@ class IdentifierFindings(BaseModel):
     sku_found: bool = False
     found_identifiers: list[str] = Field(default_factory=list)
     json_ld_data: dict[str, Any] = Field(default_factory=dict)
+    # Price found in <meta>/microdata (not JSON-LD): a free fallback for pages that
+    # expose the price only in OpenGraph/itemprop, so more offers get a real price.
+    meta_price: str | None = None
+    meta_currency: str | None = None
 
     @property
     def any_found(self) -> bool:

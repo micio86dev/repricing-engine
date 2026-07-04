@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from repricing_engine.models.product import MatchCandidate
 
-_EXACT_FUZZY_SCORE = 100.0
+# SkuBrandLayer stores fuzzy_score on a 0..1 scale (rapidfuzz ratio / 100), so an
+# exact SKU match is 1.0 — compare on that scale (not 100) to label it ``PDP·SKU``.
+_EXACT_FUZZY_SCORE = 0.999
 _OXYLABS_SOURCE = "oxylabs"
 
 

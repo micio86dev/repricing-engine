@@ -1,5 +1,6 @@
 """Ingestor for the client's own product catalog CSV."""
 
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,6 +14,19 @@ from repricing_engine.normalization.identifiers import (
     normalize_sku,
 )
 from repricing_engine.normalization.price import normalize_price
+
+# Excel mangles long barcodes into scientific notation (e.g. "8,02586E+12"). Left
+# alone, stripping non-digits can coincidentally yield a checksum-valid EAN-8, so we
+# reject these outright — a corrupt EAN must become ``None`` (later recoverable from
+# product pages) rather than a wrong identifier.
+_EXCEL_SCIENTIFIC_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?[eE][+-]?\d+\s*$")
+
+
+def _clean_barcode(raw: str | None) -> str | None:
+    """Drop Excel scientific-notation barcodes; pass everything else through."""
+    if raw is None or _EXCEL_SCIENTIFIC_RE.match(str(raw)):
+        return None
+    return raw
 
 
 class CatalogIngestor(BaseIngestor[CatalogProduct]):
@@ -81,8 +95,8 @@ class CatalogIngestor(BaseIngestor[CatalogProduct]):
             products.append(
                 CatalogProduct(
                     sku=sku,
-                    ean=normalize_ean(self._first(lowered, "ean")),
-                    gtin=normalize_gtin(self._first(lowered, "gtin")),
+                    ean=normalize_ean(_clean_barcode(self._first(lowered, "ean"))),
+                    gtin=normalize_gtin(_clean_barcode(self._first(lowered, "gtin"))),
                     brand=brand,
                     title=title,
                     category=(self._first(lowered, "category") or "").strip(),

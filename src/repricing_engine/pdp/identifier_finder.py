@@ -44,6 +44,7 @@ class IdentifierFinder:
         soup = BeautifulSoup(html, "lxml")
         haystacks = self._haystacks(soup, html)
         json_ld = self._parse_json_ld(soup)
+        meta_price, meta_currency = self._price_from_meta_microdata(soup)
 
         found: list[str] = []
         ean_found = self._contains_identifier(catalog_product.ean, haystacks, json_ld)
@@ -63,7 +64,37 @@ class IdentifierFinder:
             sku_found=sku_found,
             found_identifiers=found,
             json_ld_data=json_ld,
+            meta_price=meta_price,
+            meta_currency=meta_currency,
         )
+
+    # OpenGraph / product price meta — page-level and reliable. We deliberately avoid
+    # generic ``itemprop="price"`` microdata: it also appears on financing widgets and
+    # related-product blocks, producing bogus values (e.g. "€1.00"). Precision on real
+    # prices matters more than squeezing out a few extra low-confidence ones.
+    _META_PRICE_ATTRS: tuple[dict[str, str], ...] = (
+        {"property": "product:price:amount"},
+        {"property": "og:price:amount"},
+    )
+    _META_CURRENCY_ATTRS: tuple[dict[str, str], ...] = (
+        {"property": "product:price:currency"},
+        {"property": "og:price:currency"},
+    )
+
+    def _price_from_meta_microdata(self, soup: BeautifulSoup) -> tuple[str | None, str | None]:
+        """Read a price/currency from OpenGraph/product ``<meta>`` tags (free, reliable)."""
+        price = self._meta_content(soup, self._META_PRICE_ATTRS)
+        currency = self._meta_content(soup, self._META_CURRENCY_ATTRS)
+        return price, (currency.upper() if currency else None)
+
+    @staticmethod
+    def _meta_content(soup: BeautifulSoup, attr_sets: tuple[dict[str, str], ...]) -> str | None:
+        """Return the first non-empty ``<meta content=...>`` for the given attrs."""
+        for attrs in attr_sets:
+            element = soup.find("meta", attrs=attrs)
+            if element and element.get("content"):
+                return str(element["content"]).strip()
+        return None
 
     @staticmethod
     def _haystacks(soup: BeautifulSoup, html: str) -> tuple[str, str]:
@@ -161,7 +192,11 @@ class IdentifierFinder:
 
         offer = self._first_offer(product.get("offers"))
         if offer:
-            if (price := offer.get("price")) is not None:
+            # Plain Offer.price, else AggregateOffer.lowPrice (a listing's cheapest).
+            price = offer.get("price")
+            if price is None:
+                price = offer.get("lowPrice")
+            if price is not None:
                 normalized["price"] = str(price)
             if currency := offer.get("priceCurrency"):
                 normalized["currency"] = str(currency)
@@ -170,7 +205,28 @@ class IdentifierFinder:
             seller = offer.get("seller")
             if isinstance(seller, dict) and (seller_name := seller.get("name")):
                 normalized["seller"] = str(seller_name)
+            shipping = self._shipping_from_offer(offer)
+            if shipping is not None:
+                normalized["shipping"] = shipping
         return normalized
+
+    @staticmethod
+    def _shipping_from_offer(offer: dict[str, Any]) -> str | None:
+        """Read a shipping cost from a schema.org ``OfferShippingDetails`` block.
+
+        Returns the ``shippingRate.value`` (e.g. ``"0"`` for free shipping) as a
+        string, or ``None`` when the offer carries no structured shipping.
+        """
+        details = offer.get("shippingDetails")
+        if isinstance(details, list):
+            details = next((d for d in details if isinstance(d, dict)), None)
+        if not isinstance(details, dict):
+            return None
+        rate = details.get("shippingRate")
+        if not isinstance(rate, dict):
+            return None
+        value = rate.get("value")
+        return str(value) if value is not None else None
 
     @staticmethod
     def _first_offer(offers: object) -> dict[str, Any] | None:

@@ -11,7 +11,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from repricing_engine.exceptions import SourceFetchError
 from repricing_engine.sources.deduplicator import deduplicate
+from repricing_engine.sources.enrichment import confirm_identifiers
 from repricing_engine.sources.mapper import to_competitor_product
 from repricing_engine.sources.providers.duckduckgo import DuckDuckGoProvider
 from repricing_engine.sources.providers.searxng import SearXNGProvider
@@ -66,11 +68,15 @@ class SourceFetcher:
                 settings.searxng_base_url,
                 enabled=settings.searxng_enabled,
                 timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                max_pages=settings.searxng_max_pages,
+                max_concurrency=settings.searxng_max_concurrency,
+                rate_limit_seconds=settings.searxng_rate_limit_seconds,
             ),
             TrovaPrezziProvider(
                 client,
                 enabled=settings.trovaprezzi_enabled,
                 timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                rate_limit_seconds=settings.trovaprezzi_rate_limit_seconds,
                 ai_extractor=ai_extractor,
             ),
             DuckDuckGoProvider(
@@ -108,8 +114,21 @@ class SourceFetcher:
             return_exceptions=False,
         )
         raw: list[RawSearchResult] = [result for batch in gathered for result in batch]
-        deduped = deduplicate(raw)
-        return [to_competitor_product(result, market) for result in deduped]
+        # Truthfully stamp catalog SKU/EAN/brand where a result's text confirms it,
+        # so deterministic layers (not just semantic) can match fetched offers.
+        enriched = [confirm_identifiers(result, product) for result in raw]
+        deduped = deduplicate(enriched)
+        competitors = [to_competitor_product(result, market) for result in deduped]
+
+        priced = sum(1 for c in competitors if c.price is not None)
+        logger.info(
+            "Fetch %s: %d raw result(s) -> %d offer(s) (one per domain), %d priced.",
+            product.sku,
+            len(raw),
+            len(competitors),
+            priced,
+        )
+        return competitors
 
     @staticmethod
     async def _safe_search(
@@ -119,7 +138,18 @@ class SourceFetcher:
     ) -> list[RawSearchResult]:
         """Run one provider, degrading a failure to an empty result + a log line."""
         try:
-            return await provider.search(product, market)
+            results = await provider.search(product, market)
+        except SourceFetchError as exc:
+            # Expected provider-level failure (block/rate-limit/timeout): concise, no traceback.
+            logger.warning(
+                "Source provider %r unavailable for %s: %s", provider.name, product.sku, exc
+            )
+            return []
         except Exception:
+            # Truly unexpected — keep the full traceback for debugging.
             logger.warning("Source provider %r failed; skipping.", provider.name, exc_info=True)
             return []
+        logger.info(
+            "Provider %s returned %d result(s) for %s.", provider.name, len(results), product.sku
+        )
+        return results

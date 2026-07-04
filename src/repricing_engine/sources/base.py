@@ -27,6 +27,11 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+#: A realistic browser ``Accept`` header, shared by the HTML-scraping providers.
+DEFAULT_ACCEPT = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"
+)
+
 
 class BaseSourceProvider(ABC):
     """A single way to discover competitor offers for a catalog product."""

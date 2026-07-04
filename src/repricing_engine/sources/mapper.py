@@ -68,7 +68,7 @@ def to_competitor_product(result: RawSearchResult, market: Market) -> Competitor
         ean=normalize_ean(result.ean),
         gtin=normalize_gtin(result.ean),
         sku=_normalized_sku(result.sku),
-        brand=None,
+        brand=result.brand,  # set only when confirmed against the catalog (see enrichment)
         shipping_cost=result.shipping_cost,
         availability=Availability.UNKNOWN,
         seller=result.domain or _domain(result.url) or None,

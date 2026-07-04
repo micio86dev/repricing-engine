@@ -83,8 +83,16 @@ def match(
         typer.Option("--verify-pdp", help="Visit product pages to confirm IDs and real prices"),
     ] = False,
     max_pdp_per_product: Annotated[
-        int, typer.Option(help="Max product pages to verify per catalog product")
+        int, typer.Option(help="Max product pages to verify per catalog product (0 = no limit)")
     ] = 15,
+    strict_match: Annotated[
+        bool,
+        typer.Option(
+            "--strict-match",
+            help="Keep only offers proven to be the same product (EAN/GTIN/SKU or a "
+            "PDP identifier hit); drop title-similarity ('snippet') matches",
+        ),
+    ] = False,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Verbose logging")] = False,
 ) -> None:
     """Match a catalog against competitor products and write a results CSV."""
@@ -124,6 +132,7 @@ def match(
                     fetch=fetch,
                     verify_pdp=verify_pdp,
                     max_pdp_per_product=max_pdp_per_product,
+                    strict_match=strict_match,
                 )
             )
         else:
@@ -156,6 +165,7 @@ async def _run_enhanced(
     fetch: bool,
     verify_pdp: bool,
     max_pdp_per_product: int,
+    strict_match: bool = False,
 ) -> list[MatchResult]:
     """Run the async fetch/verify pipeline within a shared HTTP client lifecycle."""
     async with httpx.AsyncClient() as client:
@@ -173,6 +183,7 @@ async def _run_enhanced(
             fetch=fetch,
             verify_pdp=verify_pdp,
             max_pdp_per_product=max_pdp_per_product,
+            strict_match=strict_match,
         )
 
 

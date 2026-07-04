@@ -7,9 +7,11 @@ Intelligent repricing/price monitoring engine for e-commerce. Multi-layer produc
 ## Commands
 
 - `uv sync` — Install all dependencies
+- `docker compose up -d` — Start the local SearXNG (primary `--fetch` source; JSON API on :8888)
 - `uv run repricing match --catalog <file> --competitors <file> --output <file>` — Run matching (CSV-only)
-- `uv run repricing match --catalog <file> --fetch --verify-pdp` — Discover competitors online + verify pages
-- `uv sync --extra playwright && uv run playwright install chromium` — Optional JS-rendering fallback
+- `uv run repricing match --catalog <file> --fetch --output <file>` — Discover competitors online **and read their real prices** (PDP price reading is on by default; set `FETCH_READ_PRICES=false` for URLs-only)
+- `uv run repricing match --catalog <file> --fetch --verify-pdp` — Also force full page verification
+- `uv sync --extra playwright && uv run playwright install chromium` — JS/Cloudflare-page fallback (enable with `PDP_PLAYWRIGHT_ENABLED=true`)
 - `uv run pytest` — Run all tests
 - `uv run pytest tests/unit/` — Run unit tests only
 - `uv run pytest -k "test_exact_id"` — Run specific test pattern
@@ -38,14 +40,33 @@ Key principle: **Never trust a single identifier.** Even if EAN matches, cross-v
 Discovers *more* competitor offers than a static CSV holds, via free providers run
 concurrently then deduplicated:
 
-- **SearXNG** (primary, free, self-hosted metasearch — `SEARXNG_BASE_URL`)
-- **TrovaPrezzi** (IT-only public price-comparison pages; bs4, AI fallback)
-- **DuckDuckGo** (free HTML-endpoint SERP fallback, per-instance rate-limited)
-- **CSV file** (`CsvFileProvider` wrapping `OxyLabsIngestor`)
+- **SearXNG** (primary, free, self-hosted metasearch — `SEARXNG_BASE_URL`). Bundled via
+  `docker-compose.yml` + `searxng/settings.yml` (JSON API enabled, limiter off for localhost).
+  It aggregates Google/Bing/Brave/Qwant/... server-side, so it reaches Cloudflare-protected
+  retailers a plain scraper can't. Each product is queried with several strategies — quoted SKU,
+  a *valid* EAN/GTIN, brand+title, title — over the first `SEARXNG_MAX_PAGES` result pages.
+- **TrovaPrezzi** (IT-only public price-comparison pages; bs4, AI fallback; often Cloudflare-blocked
+  on plain httpx — SearXNG surfaces its URLs instead, then PDP reads the price).
+- **DuckDuckGo** (free HTML-endpoint SERP fallback, per-instance rate-limited; brand+title and
+  quoted-SKU queries).
+- **CSV file** (`CsvFileProvider` wrapping `OxyLabsIngestor`).
 
 `SourceFetcher` orders providers cheapest-first (`cost_tier`), runs the available ones
-with `asyncio.gather` (each guarded so one failure can't sink the batch), maps results to
-`CompetitorProduct`, and dedupes by normalized URL then one-per-domain (cheapest).
+with `asyncio.gather` (each guarded so one failure can't sink the batch). It then **enriches**
+raw results via `sources/enrichment.py` — stamping the catalog SKU/EAN/brand onto a result *only
+when that value literally appears* in its title/snippet/URL, so the deterministic `exact_id` /
+`sku_brand` layers (not just semantic) can confirm fetched offers with high confidence. Finally it
+maps to `CompetitorProduct` and dedupes by normalized URL then one-per-domain (cheapest).
+
+Because fetched offers must still clear matching, the sync `match_one` takes `full_landscape=True`
+on the `--fetch` path: the semantic layer keeps scoring every competitor that isn't *itself*
+already confidently matched, so a strong match elsewhere never silently truncates the landscape.
+The default CSV-only path (`full_landscape=False`) preserves the legacy global semantic-skip
+byte-for-byte.
+
+**Prices on `--fetch`:** SERP results are URLs (mostly price-less), so `--fetch` runs each matched
+offer through the same `PdpVerifier` cascade to read the real price/stock (controlled by
+`FETCH_READ_PRICES`, default on). This reuses the PDP code below with no duplication.
 
 ### PDP Verification (opt-in, `--verify-pdp`) — `src/repricing_engine/pdp/`
 
@@ -131,11 +152,13 @@ price and the candidate is still below `PDP_AI_CONFIDENCE_THRESHOLD`.
 - `.env` file for secrets (never commit) — see `.env.example`
 - All thresholds configurable via env vars
 - Embedding model downloads to `~/.cache/huggingface/` on first run
-- **Source fetching** (`--fetch`): `SEARXNG_BASE_URL`, `SEARXNG_ENABLED`, `TROVAPREZZI_ENABLED`,
-  `DUCKDUCKGO_ENABLED`, `DUCKDUCKGO_RATE_LIMIT_SECONDS`
-- **PDP verification** (`--verify-pdp`): `PDP_FETCH_TIMEOUT_SECONDS`, `PDP_MAX_CONCURRENT_FETCHES`,
-  `PDP_RATE_LIMIT_PER_DOMAIN_SECONDS`, `PDP_AI_EXTRACTION_ENABLED`, `PDP_AI_CONFIDENCE_THRESHOLD`,
-  `PDP_PLAYWRIGHT_ENABLED`
+- **Source fetching** (`--fetch`): `SEARXNG_BASE_URL` (default `http://localhost:8888`),
+  `SEARXNG_ENABLED`, `SEARXNG_MAX_PAGES` (pages per query, default 3), `TROVAPREZZI_ENABLED`,
+  `DUCKDUCKGO_ENABLED`, `DUCKDUCKGO_RATE_LIMIT_SECONDS`, `FETCH_READ_PRICES` (read real prices on
+  `--fetch`, default on)
+- **PDP verification** (`--verify-pdp`, and price reading on `--fetch`): `PDP_FETCH_TIMEOUT_SECONDS`,
+  `PDP_MAX_CONCURRENT_FETCHES`, `PDP_RATE_LIMIT_PER_DOMAIN_SECONDS`, `PDP_AI_EXTRACTION_ENABLED`,
+  `PDP_AI_CONFIDENCE_THRESHOLD`, `PDP_PLAYWRIGHT_ENABLED`
 
 ## Implementation Notes
 

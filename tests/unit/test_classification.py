@@ -34,12 +34,13 @@ class TestClassification:
         assert confidence_tier_for(candidate) == "PDP·GTIN"
 
     def test_exact_sku(self):
-        candidate = _candidate("sku_brand", fuzzy=100)
+        # SkuBrandLayer stores fuzzy on a 0..1 scale; an exact match is 1.0.
+        candidate = _candidate("sku_brand", fuzzy=1.0)
         assert match_field_for(candidate) == "sku"
         assert confidence_tier_for(candidate) == "PDP·SKU"
 
     def test_normalized_sku(self):
-        candidate = _candidate("sku_brand", fuzzy=88)
+        candidate = _candidate("sku_brand", fuzzy=0.88)
         assert confidence_tier_for(candidate) == "PDP·SKU·norm"
 
     def test_semantic_snippet_organic(self):

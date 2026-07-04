@@ -28,6 +28,7 @@ class RawSearchResult(BaseModel):
     domain: str | None = None  # bare host (without leading www.)
     ean: str | None = None
     sku: str | None = None
+    brand: str | None = None  # set only when confirmed against the catalog product
     raw_data: dict[str, Any] = Field(default_factory=dict)
 
 

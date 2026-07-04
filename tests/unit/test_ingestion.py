@@ -39,6 +39,27 @@ class TestCatalogIngestor:
         assert products[0].ean is None
         assert products[0].market == Market.DE
 
+    def test_excel_scientific_notation_ean_is_rejected(self, tmp_path: Path):
+        # Excel mangles "8025863058632" into "8,02586E+12"; stripping non-digits
+        # would coincidentally yield a valid EAN-8. It must become None (recoverable
+        # later from product pages), never a wrong barcode.
+        csv = tmp_path / "sci.csv"
+        csv.write_text(
+            'sku,ean,brand,title,market\nAP19993,"8,02586E+12",Fantini Cosmi,ECOCOMFORT,IT\n',
+            encoding="utf-8",
+        )
+        product = CatalogIngestor().ingest(csv)[0]
+        assert product.ean is None
+        assert product.gtin is None
+
+    def test_valid_ean_still_parsed(self, tmp_path: Path):
+        csv = tmp_path / "ok.csv"
+        csv.write_text(
+            "sku,ean,brand,title,market\nX1,4006381333931,Acme,Widget,IT\n",
+            encoding="utf-8",
+        )
+        assert CatalogIngestor().ingest(csv)[0].ean == "4006381333931"
+
     def test_unmapped_columns_go_to_attributes(self, tmp_path: Path):
         csv = tmp_path / "attrs.csv"
         csv.write_text(
