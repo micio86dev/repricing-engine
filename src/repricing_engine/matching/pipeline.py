@@ -97,11 +97,25 @@ class MatchingPipeline:
         self,
         catalog_product: CatalogProduct,
         competitor_products: list[CompetitorProduct],
+        *,
+        full_landscape: bool = False,
     ) -> MatchResult:
-        """Run the cascade for a single catalog product."""
+        """Run the cascade for a single catalog product.
+
+        Args:
+            catalog_product: The product being priced.
+            competitor_products: Candidate competitor offers to match against.
+            full_landscape: When ``True`` (the ``--fetch`` path), the semantic
+                layer still scores every competitor that isn't already confidently
+                matched, so discovered offers are never suppressed by a strong
+                match elsewhere. When ``False`` (the default CSV-only path) the
+                legacy global semantic-skip is preserved byte-for-byte.
+        """
         start = perf_counter()
 
-        raw_candidates = self._collect_candidates(catalog_product, competitor_products)
+        raw_candidates = self._collect_candidates(
+            catalog_product, competitor_products, full_landscape=full_landscape
+        )
         deduped = dedupe_candidates(raw_candidates)
 
         accepted = [c for c in deduped if c.confidence >= self.min_confidence]
@@ -126,15 +140,55 @@ class MatchingPipeline:
         self,
         catalog_product: CatalogProduct,
         competitor_products: list[CompetitorProduct],
+        *,
+        full_landscape: bool = False,
     ) -> list[MatchCandidate]:
         """Run non-AI layers in cascade order, skipping semantic when confident."""
         collected: list[MatchCandidate] = []
         for layer in self.layers:
-            if layer.name == "semantic" and self._already_confident(collected):
-                logger.debug("Skipping semantic for %s (already confident)", catalog_product.sku)
-                continue
-            collected.extend(layer.match(catalog_product, competitor_products))
+            if layer.name == "semantic":
+                targets = self._semantic_targets(
+                    catalog_product, competitor_products, collected, full_landscape=full_landscape
+                )
+                if not targets:
+                    continue
+                collected.extend(layer.match(catalog_product, targets))
+            else:
+                collected.extend(layer.match(catalog_product, competitor_products))
         return collected
+
+    def _semantic_targets(
+        self,
+        catalog_product: CatalogProduct,
+        competitor_products: list[CompetitorProduct],
+        collected: list[MatchCandidate],
+        *,
+        full_landscape: bool,
+    ) -> list[CompetitorProduct]:
+        """Decide which competitors the semantic layer should still score.
+
+        CSV-only path (``full_landscape=False``): legacy behavior — skip semantic
+        entirely once any candidate is already confident. Landscape path
+        (``full_landscape=True``): score every competitor that isn't itself
+        already confidently matched, so discovered offers survive.
+        """
+        if not full_landscape:
+            if self._already_confident(collected):
+                logger.debug("Skipping semantic for %s (already confident)", catalog_product.sku)
+                return []
+            return competitor_products
+
+        confident_ids = {
+            c.competitor_product.source_id
+            for c in collected
+            if c.confidence >= _SEMANTIC_SKIP_CONFIDENCE
+        }
+        remaining = [c for c in competitor_products if c.source_id not in confident_ids]
+        if not remaining:
+            logger.debug(
+                "Skipping semantic for %s (all competitors confident)", catalog_product.sku
+            )
+        return remaining
 
     @staticmethod
     def _already_confident(candidates: list[MatchCandidate]) -> bool:

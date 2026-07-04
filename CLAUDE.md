@@ -7,7 +7,11 @@ Intelligent repricing/price monitoring engine for e-commerce. Multi-layer produc
 ## Commands
 
 - `uv sync` — Install all dependencies
-- `uv run repricing match --catalog <file> --competitors <file> --output <file>` — Run matching
+- `docker compose up -d` — Start the local SearXNG (primary `--fetch` source; JSON API on :8888)
+- `uv run repricing match --catalog <file> --competitors <file> --output <file>` — Run matching (CSV-only)
+- `uv run repricing match --catalog <file> --fetch --output <file>` — Discover competitors online **and read their real prices** (PDP price reading is on by default; set `FETCH_READ_PRICES=false` for URLs-only)
+- `uv run repricing match --catalog <file> --fetch --verify-pdp` — Also force full page verification
+- `uv sync --extra playwright && uv run playwright install chromium` — JS/Cloudflare-page fallback (enable with `PDP_PLAYWRIGHT_ENABLED=true`)
 - `uv run pytest` — Run all tests
 - `uv run pytest tests/unit/` — Run unit tests only
 - `uv run pytest -k "test_exact_id"` — Run specific test pattern
@@ -31,20 +35,73 @@ Layer 4: AI Quality Gate (Groq/Llama)  → confirms or rejects each match
 
 Key principle: **Never trust a single identifier.** Even if EAN matches, cross-validate brand + category. Layer 4 (AI) is the final arbiter for ambiguous cases.
 
+### Source Fetching (opt-in, `--fetch`) — `src/repricing_engine/sources/`
+
+Discovers *more* competitor offers than a static CSV holds, via free providers run
+concurrently then deduplicated:
+
+- **SearXNG** (primary, free, self-hosted metasearch — `SEARXNG_BASE_URL`). Bundled via
+  `docker-compose.yml` + `searxng/settings.yml` (JSON API enabled, limiter off for localhost).
+  It aggregates Google/Bing/Brave/Qwant/... server-side, so it reaches Cloudflare-protected
+  retailers a plain scraper can't. Each product is queried with several strategies — quoted SKU,
+  a *valid* EAN/GTIN, brand+title, title — over the first `SEARXNG_MAX_PAGES` result pages.
+- **TrovaPrezzi** (IT-only public price-comparison pages; bs4, AI fallback; often Cloudflare-blocked
+  on plain httpx — SearXNG surfaces its URLs instead, then PDP reads the price).
+- **DuckDuckGo** (free HTML-endpoint SERP fallback, per-instance rate-limited; brand+title and
+  quoted-SKU queries).
+- **CSV file** (`CsvFileProvider` wrapping `OxyLabsIngestor`).
+
+`SourceFetcher` orders providers cheapest-first (`cost_tier`), runs the available ones
+with `asyncio.gather` (each guarded so one failure can't sink the batch). It then **enriches**
+raw results via `sources/enrichment.py` — stamping the catalog SKU/EAN/brand onto a result *only
+when that value literally appears* in its title/snippet/URL, so the deterministic `exact_id` /
+`sku_brand` layers (not just semantic) can confirm fetched offers with high confidence. Finally it
+maps to `CompetitorProduct` and dedupes by normalized URL then one-per-domain (cheapest).
+
+Because fetched offers must still clear matching, the sync `match_one` takes `full_landscape=True`
+on the `--fetch` path: the semantic layer keeps scoring every competitor that isn't *itself*
+already confidently matched, so a strong match elsewhere never silently truncates the landscape.
+The default CSV-only path (`full_landscape=False`) preserves the legacy global semantic-skip
+byte-for-byte.
+
+**Prices on `--fetch`:** SERP results are URLs (mostly price-less), so `--fetch` runs each matched
+offer through the same `PdpVerifier` cascade to read the real price/stock (controlled by
+`FETCH_READ_PRICES`, default on). This reuses the PDP code below with no duplication.
+
+### PDP Verification (opt-in, `--verify-pdp`) — `src/repricing_engine/pdp/`
+
+After matching, visits each candidate's product page to turn the *heuristic* `PDP·…`
+labels into facts and read the real price/shipping/stock. Cheapest signal first:
+
+```
+PageFetcher (httpx → optional Playwright)  → FetchResult
+   ↓
+IdentifierFinder: regex(EAN/GTIN/SKU) + meta + JSON-LD   (FREE — confirms + often prices)
+   ↓ (only if free pass found neither an identifier nor a price, and confidence < threshold)
+AiExtractor (Groq/Llama)                                 (LAST RESORT — tokens cost money)
+```
+
+`PdpVerifier` writes the verified offer back through `CompetitorProduct.model_copy` and
+annotates `MatchCandidate.match_details` (`pdp_verified`, `confirmation_method`,
+`extraction_method`, `source_provider`). Fetch/parse failures degrade to the original data
+with `pdp_verified=False` (zero data loss). Capped at `--max-pdp-per-product` (default 15).
+
 ### Data Flow
 
 ```
 catalog.csv → CatalogIngestor → [CatalogProduct]
-                                       ↓
-oxylabs.csv → OxyLabsIngestor → [CompetitorProduct]
-                                       ↓
-                              MatchingPipeline
-                              (Layer 1→2→3→4)
-                                       ↓
-                              [MatchResult]
-                                       ↓
-                              CsvWriter → output.csv
+competitors.csv → OxyLabsIngestor → csv_pool ─┐
+                                              │  (--fetch) SourceFetcher → fetched competitors
+                                              ↓
+EnhancedPipeline (async) ── per product ──→ MatchingPipeline.match_one (Layer 1→4, sync)
+                                              ↓
+                                  (--verify-pdp) PdpVerifier  → verified [MatchCandidate]
+                                              ↓
+                              [MatchResult] → LandscapeCsvWriter → output.csv (+_summary +_stats)
 ```
+
+The default CSV-only path (no `--fetch`/`--verify-pdp`) is **byte-for-byte unchanged**:
+it skips `EnhancedPipeline` and calls `MatchingPipeline.run` directly.
 
 ## Code Conventions
 
@@ -75,19 +132,50 @@ oxylabs.csv → OxyLabsIngestor → [CompetitorProduct]
 3. Implement `ingest(file_path) -> list[CompetitorProduct]`
 4. Add CLI option in `cli.py`
 
+### Adding a new source provider (`--fetch`)
+
+1. Create `src/repricing_engine/sources/providers/my_provider.py`
+2. Subclass `BaseSourceProvider`; set `name` + `cost_tier`; take an injected `httpx.AsyncClient`
+3. Implement `async search(product, market) -> list[RawSearchResult]` and `is_available()`
+4. Register it in `SourceFetcher.from_settings`; add a config toggle in `config.py`
+5. Add unit tests injecting `httpx.MockTransport` (never the live network)
+
+### PDP cascade rule (cheapest → most expensive)
+
+Always try regex/meta → JSON-LD (both free) **before** the Groq `AiExtractor`. Groq tokens
+cost money, so AI extraction runs only when the free pass found neither an identifier nor a
+price and the candidate is still below `PDP_AI_CONFIDENCE_THRESHOLD`.
+
 ## Environment
 
 - Python 3.12+ via uv
-- `.env` file for secrets (never commit)
+- `.env` file for secrets (never commit) — see `.env.example`
 - All thresholds configurable via env vars
 - Embedding model downloads to `~/.cache/huggingface/` on first run
+- **Source fetching** (`--fetch`): `SEARXNG_BASE_URL` (default `http://localhost:8888`),
+  `SEARXNG_ENABLED`, `SEARXNG_MAX_PAGES` (pages per query, default 3), `TROVAPREZZI_ENABLED`,
+  `DUCKDUCKGO_ENABLED`, `DUCKDUCKGO_RATE_LIMIT_SECONDS`, `FETCH_READ_PRICES` (read real prices on
+  `--fetch`, default on)
+- **PDP verification** (`--verify-pdp`, and price reading on `--fetch`): `PDP_FETCH_TIMEOUT_SECONDS`,
+  `PDP_MAX_CONCURRENT_FETCHES`, `PDP_RATE_LIMIT_PER_DOMAIN_SECONDS`, `PDP_AI_EXTRACTION_ENABLED`,
+  `PDP_AI_CONFIDENCE_THRESHOLD`, `PDP_PLAYWRIGHT_ENABLED`
 
 ## Implementation Notes
 
 - **CLI options use `Annotated[...]`** (e.g. `Annotated[Path, typer.Option(...)]`) rather than
   call-in-default, to satisfy ruff `B008`.
 - **Heavy dependencies are dependency-injected**: the sentence-transformers encoder
-  (`SemanticLayer`) and the Groq client (`AiQualityGateLayer`) are passed in, so unit tests stub
-  them and avoid model downloads / network calls. Real-model checks live behind the `integration`
-  pytest marker.
+  (`SemanticLayer`), the Groq client (`AiQualityGateLayer` / `AiExtractor`), and every
+  `httpx.AsyncClient` (providers + `PageFetcher`) are passed in, so unit tests stub them with
+  `FakeEncoder` / `FakeGroqClient` / `httpx.MockTransport` and avoid model downloads / network.
+- **Async bridge**: fetching and PDP scraping are async; `MatchingPipeline.match_one` is sync.
+  `EnhancedPipeline` (in `orchestration/`) calls the sync matcher inline and wraps Groq calls in
+  `asyncio.to_thread`. The sync CSV-only path stays unchanged.
+- **`CompetitorProduct.price` is optional** (`Decimal | None`): a fetched offer may have no price
+  until a PDP is read. The writer guards all landed-price math for `None`.
 - **Groq model** defaults to `llama-3.3-70b-versatile` (set via `GROQ_MODEL`).
+- **Playwright is an optional extra** (`[project.optional-dependencies] playwright`), lazily
+  imported only when `PDP_PLAYWRIGHT_ENABLED=true`; httpx is the default fetcher.
+- **Price parsing**: feed/scrape strings (locale-formatted) use `normalize_price(value, currency,
+  market)`; JSON-LD / AI / API values (machine-formatted) use `parse_price_loose` so `789.0`
+  stays `789.0` rather than being read as `7890` under IT thousands-separator rules.

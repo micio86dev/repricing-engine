@@ -8,8 +8,10 @@ authors = [
     { name = "Micio Dev", email = "micio86dev@gmail.com" }
 ]
 dependencies = [
+    "beautifulsoup4>=4.15.0",
     "groq>=1.4.0",
     "httpx>=0.28.1",
+    "lxml>=6.1.1",
     "polars>=1.41.2",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
@@ -19,6 +21,13 @@ dependencies = [
     "tenacity>=9.1.4",
     "typer>=0.26.7",
 ]
+
+[project.optional-dependencies]
+# Optional JavaScript-rendering fallback for PDP fetching. Off by default
+# (set PDP_PLAYWRIGHT_ENABLED=true); install with `uv sync --extra playwright`
+# then `playwright install chromium`. Kept out of core to stay light on low-RAM
+# machines — httpx is the default fetcher.
+playwright = ["playwright>=1.49.0"]
 
 [project.scripts]
 repricing = "repricing_engine.cli:app"

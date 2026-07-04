@@ -26,3 +26,19 @@ class MatchingError(RepricingError):
 
 class AiQualityGateError(RepricingError):
     """Raised when the AI quality gate fails (after retries)."""
+
+
+class SourceFetchError(RepricingError):
+    """Raised when a source provider cannot complete a search.
+
+    Orchestration guards each provider so one failure can't sink the batch;
+    this is the typed error a provider raises before that guard logs and degrades.
+    """
+
+
+class PdpVerificationError(RepricingError):
+    """Raised when PDP verification fails irrecoverably for a candidate.
+
+    Per-candidate failures are normally caught and degraded (the original offer
+    is kept, ``pdp_verified=False``); this is reserved for unexpected faults.
+    """

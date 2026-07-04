@@ -34,7 +34,7 @@ class CompetitorProduct(BaseModel):
     source: str
     source_id: str
     title: str
-    price: Decimal
+    price: Decimal | None = None  # may be unknown until a PDP is fetched/verified
     currency: str
     url: str
     market: Market
@@ -45,6 +45,7 @@ class CompetitorProduct(BaseModel):
     shipping_cost: Decimal | None = None
     availability: Availability = Availability.UNKNOWN
     seller: str | None = None  # competitor/retailer display name
+    source_provider: str | None = None  # the fetch provider (searxng, trovaprezzi, ...)
     scraped_at: str | None = None  # when this offer was captured
     raw_data: dict[str, Any] = Field(default_factory=dict)
 

@@ -1,0 +1,36 @@
+# SearXNG configuration for the repricing engine's local metasearch instance.
+#
+# `use_default_settings: true` inherits SearXNG's full default engine set (Google,
+# Bing, DuckDuckGo, Brave, Qwant, Startpage, Mojeek, ...) so we only override what
+# the engine needs to be usable as a programmatic source:
+#   * the JSON output format (the default is HTML-only -> `format=json` would 403);
+#   * the bot limiter disabled (this instance is bound to localhost only).
+#
+# Mounted read-only into the container at /etc/searxng/settings.yml via
+# docker-compose.yml. It is safe to commit: it holds no secret beyond a local-only
+# key. Change `server.secret_key` if you ever expose this instance off localhost.
+use_default_settings: true
+
+general:
+  instance_name: "repricing-searxng"
+
+server:
+  # Local-only key; this instance must never be exposed off localhost as-is.
+  secret_key: "repricing-engine-local-only-change-if-exposed"
+  # Disable the bot limiter: we are the only (localhost) client and need the JSON API.
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  # Enabling `json` here is the whole point — the default is [html] only.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0
+  pool_connections: 100
+  pool_maxsize: 20

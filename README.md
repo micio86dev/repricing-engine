@@ -53,6 +53,51 @@ across multiple signals and uses an LLM as the final arbiter for ambiguous cases
 Each layer emits `MatchCandidate`s with a confidence score and an explanation. The pipeline keeps
 all candidates (matched and rejected) so results are auditable.
 
+### Finding more competitors — multi-source fetching & PDP verification (opt-in)
+
+A single static CSV usually surfaces too few competitors. Two **opt-in** stages wrap the matcher
+(both off by default — the CSV-only flow above is unchanged):
+
+- **`--fetch` — source fetching.** Discover competitor URLs via free providers run concurrently
+  then deduplicated: **SearXNG** (primary, self-hosted metasearch), **TrovaPrezzi** (IT-only
+  comparison pages), **DuckDuckGo** (HTML-endpoint fallback), and a **CSV file** provider.
+- **`--verify-pdp` — page verification.** Visit each candidate's product page and confirm the
+  EAN/GTIN/SKU is really on it, reading the *real* price, shipping, and stock. A cheap→expensive
+  cascade keeps cost down: **regex + JSON-LD (free)** first, **Groq AI extraction** only as a last
+  resort. This is what turns the `PDP·GTIN` / `PDP·SKU` confidence labels from heuristics into facts.
+
+```
+ catalog ─► csv_pool ─┐
+                      ├─(--fetch)─► SourceFetcher ─► more competitors
+                      ▼
+        EnhancedPipeline ─ per product ─► MatchingPipeline (Layer 1→4)
+                      ▼
+        (--verify-pdp) PdpVerifier:  fetch ─► IDs/JSON-LD (free) ─► AI (last resort)
+                      ▼
+                 LandscapeCsvWriter ─► output.csv  (+ _summary, + _stats)
+```
+
+#### SearXNG quick start (free, self-hosted)
+
+The repo ships a ready-to-run SearXNG (`docker-compose.yml` + `searxng/settings.yml`, with the JSON
+API enabled and the localhost limiter off), and `.env.example` already points at it:
+
+```bash
+docker compose up -d          # SearXNG JSON API on http://localhost:8888
+# .env: SEARXNG_BASE_URL=http://localhost:8888  (already set from .env.example)
+```
+
+SearXNG aggregates many engines (Google/Bing/Brave/Qwant/DuckDuckGo/…) server-side, so it reaches
+retailers a plain scraper can't. If `SEARXNG_BASE_URL` is empty, SearXNG is skipped with a one-line
+hint and the other providers still run; with no provider available, `--fetch` degrades gracefully to
+the CSV-only result.
+
+> **Rate limits.** The upstream engines throttle by IP. On very large or rapidly-repeated runs they
+> may temporarily return CAPTCHAs and offer counts drop. The engine paces itself
+> (`SEARXNG_MAX_CONCURRENCY`, `SEARXNG_RATE_LIMIT_SECONDS`, `SEARXNG_MAX_PAGES`); on a constrained IP
+> a gentle profile (`SEARXNG_MAX_CONCURRENCY=1 SEARXNG_RATE_LIMIT_SECONDS=2 SEARXNG_MAX_PAGES=1`)
+> spreads the available capacity across more products. Full volume returns once the IP cools down.
+
 ## Quick Start
 
 ### Prerequisites
@@ -98,7 +143,63 @@ uv run repricing match \
   --skip-ai
 ```
 
+### Usage modes
+
+```bash
+# 1) CSV-only (default, fully offline) — unchanged classic behavior
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv
+
+# 2) CSV + discover more competitors online
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv --fetch
+
+# 3) CSV + verify each candidate's product page (real price/shipping/stock)
+uv run repricing match --catalog catalog.csv --competitors oxylabs.csv --verify-pdp
+
+# 4) Online-only — no CSV; discover and verify everything
+uv run repricing match --catalog catalog.csv --fetch --verify-pdp
+```
+
+#### Maximum coverage, 100% correct matches (recommended for `catalog.csv` → `output/results.csv`)
+
+Find **as many real offers as possible, from every available source, for every product** — and keep
+**only offers proven to be the exact same product** (EAN/GTIN, a confirmed SKU, or the identifier
+found on the product page); title-similarity guesses are dropped.
+
+```bash
+# Make sure SearXNG is up first:  docker compose up -d
+uv run repricing match \
+  --catalog catalog.csv \
+  --fetch \
+  --verify-pdp \
+  --strict-match \
+  --max-pdp-per-product 0 \
+  --output output/results.csv
+```
+
+- `--fetch` — discover competitors across all providers (SearXNG's many engines + DuckDuckGo +
+  TrovaPrezzi) and read each offer's real price/stock.
+- `--verify-pdp` — visit every product page to confirm the identifier and price.
+- `--strict-match` — keep **only** identifier-confirmed offers (`match_field` = `sku`/`gtin`, or a
+  `PDP·…` confirmation); drop `snippet` (title-only) matches so every row is guaranteed to be the
+  same catalog product.
+- `--max-pdp-per-product 0` — **no limit**: price and verify *every* discovered offer (slower).
+
+> On a rate-limited IP, prefix the throttle-safe profile from the note above, e.g.
+> `SEARXNG_MAX_CONCURRENCY=1 SEARXNG_RATE_LIMIT_SECONDS=2 SEARXNG_MAX_PAGES=1 uv run repricing match …`.
+
+`--max-pdp-per-product` (default 15) caps how many pages are verified per product; `0` means no cap.
+The optional Playwright JS-rendering fallback (for Cloudflare/JS-heavy shops):
+`uv sync --extra playwright && uv run playwright install chromium`, then set `PDP_PLAYWRIGHT_ENABLED=true`.
+
 See all options with `uv run repricing match --help`.
+
+### Output
+
+`output/results.csv` has one row per confirmed offer; `output/results_summary.csv` aggregates per
+product (competitor count, min/median/max landed price, our position, suggested price floored at
+COGS); `output/results_stats.csv` holds run-level stats. Alongside the existing offer columns, the
+schema carries the verification fields (blank in CSV-only mode): `confirmation_method`,
+`pdp_verified`, `source_provider`, `extraction_method`, `shipping_note`.
 
 ## Testing
 
@@ -126,8 +227,22 @@ src/repricing_engine/
 ├── matching/
 │   ├── pipeline.py     # cascade orchestrator
 │   ├── scoring.py      # confidence → level
+│   ├── classification.py  # match-tier / confirmation labels
 │   └── layers/         # exact_id, sku_brand, semantic, ai_quality_gate
-├── output/             # CSV writer
+├── sources/            # (--fetch) source fetching
+│   ├── orchestrator.py # SourceFetcher (concurrent + dedupe)
+│   ├── deduplicator.py # URL/domain dedup
+│   ├── enrichment.py   # stamp catalog SKU/EAN/brand when confirmed in a result
+│   ├── snippet_price.py# best-effort price from a SERP snippet
+│   ├── mapper.py       # RawSearchResult → CompetitorProduct
+│   └── providers/      # searxng, trovaprezzi, duckduckgo, csv_file
+├── pdp/                # (--verify-pdp) page verification
+│   ├── verifier.py     # cheap→expensive cascade
+│   ├── fetcher.py      # httpx → optional Playwright
+│   ├── identifier_finder.py  # regex + meta + JSON-LD (free)
+│   └── extractor.py    # Groq AI extraction (last resort)
+├── orchestration/      # EnhancedPipeline (async bridge)
+├── output/             # landscape CSV writer
 └── utils/              # logging
 tests/                  # unit + integration + fixtures
 ```
