@@ -98,6 +98,14 @@ the CSV-only result.
 > a gentle profile (`SEARXNG_MAX_CONCURRENCY=1 SEARXNG_RATE_LIMIT_SECONDS=2 SEARXNG_MAX_PAGES=1`)
 > spreads the available capacity across more products. Full volume returns once the IP cools down.
 
+#### Scaling with paid providers
+
+For thousands of products/day the free engines aren't enough. **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)**
+is a full registration guide for paid discovery/shopping/scraping APIs (DataForSEO, Serper.dev,
+Oxylabs, ScraperAPI, eBay, Keepa, RSS/feeds) — with pricing, step-by-step signup, the `.env`
+variable each maps to, and a `curl` test for every key. Credentials are already wired into
+`config.py`/`.env.example`; provider adapters are added per chosen service.
+
 ## Quick Start
 
 ### Prerequisites

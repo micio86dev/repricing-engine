@@ -58,5 +58,50 @@ class Settings(BaseSettings):
     pdp_ai_extraction_enabled: bool = Field(default=True)  # last-resort Groq extraction
     pdp_ai_confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
 
+    # ------------------------------------------------------------------ #
+    # Paid / at-scale discovery providers (opt-in). All disabled and empty
+    # by default — the free SearXNG + DuckDuckGo path keeps working untouched.
+    # See docs/INTEGRATIONS.md for how to register each service and get keys.
+    # ------------------------------------------------------------------ #
+
+    # DataForSEO — recommended primary at scale (Google Shopping "Merchant" API
+    # returns priced offers directly; SERP API returns URLs). HTTP Basic auth.
+    dataforseo_enabled: bool = Field(default=False)
+    dataforseo_login: str | None = Field(default=None)  # account email
+    dataforseo_password: str | None = Field(default=None)  # API password (not the UI password)
+    dataforseo_mode: str = Field(default="shopping")  # "shopping" (priced) | "serp" (urls)
+
+    # Serper.dev — cheapest Google SERP (URLs); good for the specialist long tail.
+    serper_enabled: bool = Field(default=False)
+    serper_api_key: str | None = Field(default=None)
+
+    # Oxylabs — SERP + E-commerce Scraper API (sub-user credentials).
+    oxylabs_enabled: bool = Field(default=False)
+    oxylabs_username: str | None = Field(default=None)
+    oxylabs_password: str | None = Field(default=None)
+
+    # SearchApi.io / SerpApi — SERP/Shopping alternatives (single API key each).
+    searchapi_enabled: bool = Field(default=False)
+    searchapi_api_key: str | None = Field(default=None)
+    serpapi_enabled: bool = Field(default=False)
+    serpapi_api_key: str | None = Field(default=None)
+
+    # ScraperAPI — proxy/renderer for fetching PDPs at scale (JS/Cloudflare).
+    scraperapi_enabled: bool = Field(default=False)
+    scraperapi_api_key: str | None = Field(default=None)
+
+    # eBay Browse API (official, free tier) — new-item offers.
+    ebay_enabled: bool = Field(default=False)
+    ebay_client_id: str | None = Field(default=None)  # "App ID"
+    ebay_client_secret: str | None = Field(default=None)  # "Cert ID"
+
+    # Keepa — Amazon offers/price history.
+    keepa_enabled: bool = Field(default=False)
+    keepa_api_key: str | None = Field(default=None)
+
+    # RSS / XML merchant feeds (comma-separated URLs) — e.g. Google Merchant or
+    # comparison-site partner feeds you have access to.
+    feed_urls: str | None = Field(default=None)
+
     # Logging
     log_level: str = Field(default="INFO")
