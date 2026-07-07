@@ -166,6 +166,19 @@ _CONDITIONAL_SHIPPING_HTML = f"""
 "offers":{{"@type":"Offer","price":"49.00","priceCurrency":"EUR"}}}}</script>{_PAD}</body></html>
 """
 
+_PAID_SHIPPING_TEXT_HTML = f"""
+<html><body><h1>Prodotto</h1><p>Spedizione: 4,99€ - consegna in 48h</p>
+<script type="application/ld+json">{{"@type":"Product","sku":"APL-IPH13-128",
+"offers":{{"@type":"Offer","price":"239.00","priceCurrency":"EUR"}}}}</script>{_PAD}</body></html>
+"""
+
+_META_SHIPPING_HTML = f"""
+<html><head><meta property="product:shipping:amount" content="6.90"></head>
+<body><h1>Prodotto</h1>
+<script type="application/ld+json">{{"@type":"Product","sku":"APL-IPH13-128",
+"offers":{{"@type":"Offer","price":"239.00","priceCurrency":"EUR"}}}}</script>{_PAD}</body></html>
+"""
+
 
 class TestShippingExtraction:
     async def test_reads_structured_shipping_rate(self, mock_async_client):
@@ -193,6 +206,23 @@ class TestShippingExtraction:
             verifier = _verifier(client)
             verified = await verifier.verify_candidates(_catalog(), [_candidate(price=None)], 15)
         assert verified[0].competitor_product.shipping_cost is None
+
+    async def test_reads_paid_shipping_from_page_text(self, mock_async_client):
+        # No structured shipping; the amount stated next to "Spedizione" is read.
+        client = mock_async_client(
+            lambda request: httpx.Response(200, text=_PAID_SHIPPING_TEXT_HTML)
+        )
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        assert verified[0].competitor_product.shipping_cost == Decimal("4.99")
+
+    async def test_reads_shipping_from_meta_tag(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_META_SHIPPING_HTML))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        assert verified[0].competitor_product.shipping_cost == Decimal("6.90")
 
 
 def _gtin_page(gtin: str, sku: str = "APL-IPH13-128") -> str:

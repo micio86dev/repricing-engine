@@ -37,6 +37,9 @@ class IdentifierFindings(BaseModel):
     # expose the price only in OpenGraph/itemprop, so more offers get a real price.
     meta_price: str | None = None
     meta_currency: str | None = None
+    # Shipping cost found in <meta> tags (not JSON-LD): a free fallback for pages
+    # exposing shipping only in OpenGraph/product meta.
+    meta_shipping: str | None = None
 
     @property
     def any_found(self) -> bool:

@@ -18,16 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import Counter
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from repricing_engine.matching.scoring import select_best
 from repricing_engine.models.enums import Availability
 from repricing_engine.normalization.availability import normalize_availability
 from repricing_engine.normalization.identifiers import normalize_ean, normalize_gtin
-from repricing_engine.normalization.price import parse_price_loose
+from repricing_engine.normalization.price import extract_shipping_from_text, parse_price_loose
 from repricing_engine.pdp.fetcher import PageFetcher
 from repricing_engine.pdp.identifier_finder import IdentifierFinder
 from repricing_engine.pdp.models import PdpExtractionResult
@@ -42,26 +40,6 @@ if TYPE_CHECKING:
     from repricing_engine.pdp.models import FetchResult, IdentifierFindings
 
 logger = logging.getLogger(__name__)
-
-# Free-shipping phrases (IT/EN). We only trust an unconditional promise, so a
-# nearby threshold qualifier ("sopra 99€", "oltre", "a partire da") disqualifies it.
-_FREE_SHIPPING_RE = re.compile(
-    r"(?:spedizione|consegna)\s+(?:gratuita|gratis|gratuite)|free\s+shipping|spedizione\s+inclusa",
-    re.IGNORECASE,
-)
-_SHIPPING_THRESHOLD_RE = re.compile(
-    r"\b(sopra|oltre|a\s+partire|superior|min\.?|from|above)\b|da\s*€", re.IGNORECASE
-)
-
-
-def _has_free_shipping(html: str) -> bool:
-    """True when the page unconditionally promises free shipping (no threshold)."""
-    for match in _FREE_SHIPPING_RE.finditer(html):
-        window = html[match.end() : match.end() + 45]
-        if not _SHIPPING_THRESHOLD_RE.search(window):
-            return True
-    return False
-
 
 # How many SKU-confirmed pages must agree on a GTIN before we adopt it as the EAN.
 _GTIN_CONSENSUS_MIN = 2
@@ -271,10 +249,19 @@ class PdpVerifier:
         if findings.any_found and extraction_method is None:
             extraction_method = "regex"
 
-        # Structured shipping is rare; fall back to a conservative free-shipping scan
-        # so landed price reflects "Spedizione gratis" pages (common on IT shops).
-        if extraction.shipping_cost is None and _has_free_shipping(fetch.html):
-            extraction = extraction.model_copy(update={"shipping_cost": Decimal("0")})
+        # Shipping cascade (all free, cheapest signal first): JSON-LD → <meta> →
+        # page text. Structured shipping is rare, so fall back to meta tags, then a
+        # precise text scan reading "Spedizione gratis" (→ 0) or "Spedizione 4,99€".
+        if extraction.shipping_cost is None and findings.meta_shipping is not None:
+            meta_shipping = parse_price_loose(findings.meta_shipping)
+            if meta_shipping is not None:
+                extraction = extraction.model_copy(update={"shipping_cost": meta_shipping})
+        if extraction.shipping_cost is None:
+            text_shipping = extract_shipping_from_text(
+                fetch.html, candidate.competitor_product.market
+            )
+            if text_shipping is not None:
+                extraction = extraction.model_copy(update={"shipping_cost": text_shipping})
 
         if self._needs_ai(findings, extraction, candidate):
             ai_result = await self._ai_extractor.extract(fetch.html, catalog_product, fetch.url)
