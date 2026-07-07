@@ -15,9 +15,13 @@ from repricing_engine.exceptions import SourceFetchError
 from repricing_engine.sources.deduplicator import deduplicate
 from repricing_engine.sources.enrichment import confirm_identifiers
 from repricing_engine.sources.mapper import to_competitor_product
+from repricing_engine.sources.providers.dataforseo import DataForSeoProvider
 from repricing_engine.sources.providers.duckduckgo import DuckDuckGoProvider
 from repricing_engine.sources.providers.ebay import EbaySourceProvider
+from repricing_engine.sources.providers.feed import FeedProvider
+from repricing_engine.sources.providers.keepa import KeepaProvider
 from repricing_engine.sources.providers.searxng import SearXNGProvider
+from repricing_engine.sources.providers.serper import SerperProvider
 from repricing_engine.sources.providers.trovaprezzi import TrovaPrezziProvider
 
 if TYPE_CHECKING:
@@ -95,6 +99,44 @@ class SourceFetcher:
                     client,
                     settings.ebay_client_id,
                     settings.ebay_client_secret,
+                    timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                )
+            )
+        if (
+            settings.dataforseo_enabled
+            and settings.dataforseo_login
+            and settings.dataforseo_password
+        ):
+            providers.append(
+                DataForSeoProvider(
+                    client,
+                    settings.dataforseo_login,
+                    settings.dataforseo_password,
+                    mode=settings.dataforseo_mode,
+                    timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                )
+            )
+        if settings.serper_enabled and settings.serper_api_key:
+            providers.append(
+                SerperProvider(
+                    client,
+                    settings.serper_api_key,
+                    timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                )
+            )
+        if settings.keepa_enabled and settings.keepa_api_key:
+            providers.append(
+                KeepaProvider(
+                    client,
+                    settings.keepa_api_key,
+                    timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                )
+            )
+        if settings.feed_urls:
+            providers.append(
+                FeedProvider(
+                    client,
+                    [u.strip() for u in settings.feed_urls.split(",") if u.strip()],
                     timeout_seconds=settings.pdp_fetch_timeout_seconds,
                 )
             )
