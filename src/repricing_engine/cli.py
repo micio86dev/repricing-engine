@@ -88,8 +88,13 @@ def match(
         typer.Option("--verify-pdp", help="Visit product pages to confirm IDs and real prices"),
     ] = False,
     max_pdp_per_product: Annotated[
-        int, typer.Option(help="Max product pages to verify per catalog product (0 = no limit)")
-    ] = 15,
+        int,
+        typer.Option(
+            help="Max product pages to read per catalog product (default 0 = no limit: "
+            "read every discovered offer's page). Set a positive cap to trade completeness "
+            "for speed."
+        ),
+    ] = 0,
     strict_match: Annotated[
         bool,
         typer.Option(

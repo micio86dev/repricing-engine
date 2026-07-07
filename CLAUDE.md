@@ -85,7 +85,8 @@ AiExtractor (Groq/Llama)                                 (LAST RESORT — tokens
 `PdpVerifier` writes the verified offer back through `CompetitorProduct.model_copy` and
 annotates `MatchCandidate.match_details` (`pdp_verified`, `confirmation_method`,
 `extraction_method`, `source_provider`). Fetch/parse failures degrade to the original data
-with `pdp_verified=False` (zero data loss). Capped at `--max-pdp-per-product` (default 15).
+with `pdp_verified=False` (zero data loss). Optionally capped at `--max-pdp-per-product`
+(default `0` = no cap: every discovered offer's page is read).
 
 ### Data Flow
 

@@ -124,7 +124,7 @@ class EnhancedPipeline:
         market: Market,
         fetch: bool = False,
         verify_pdp: bool = False,
-        max_pdp_per_product: int = 15,
+        max_pdp_per_product: int = 0,
         strict_match: bool = False,
         show_progress: bool = True,
     ) -> list[MatchResult]:
