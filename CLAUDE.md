@@ -8,9 +8,10 @@ Intelligent repricing/price monitoring engine for e-commerce. Multi-layer produc
 
 - `uv sync` — Install all dependencies
 - `docker compose up -d` — Start the local SearXNG (primary `--fetch` source; JSON API on :8888)
-- `uv run repricing match --catalog <file> --competitors <file> --output <file>` — Run matching (CSV-only)
-- `uv run repricing match --catalog <file> --fetch --output <file>` — Discover competitors online **and read their real prices** (PDP price reading is on by default; set `FETCH_READ_PRICES=false` for URLs-only)
-- `uv run repricing match --catalog <file> --fetch --verify-pdp` — Also force full page verification
+- `uv run repricing match --catalog <file> --output <file>` — **Default = full online pipeline**: discovers competitors (`--fetch`), reads each offer's real price + shipping from its PDP, keeps only proven-same-product offers (`--strict-match`), and drops any offer lacking a known price **and** shipping cost (`--require-shipping`). Stock qty/status captured when present, never required.
+- `uv run repricing match --catalog <file> --competitors <file> --no-fetch --no-require-shipping` — Offline **CSV-only** run (the legacy path; loosen the default filters explicitly).
+- `uv run repricing match --catalog <file> --verify-pdp` — Also force full page verification (beyond the default price/shipping read).
+- Opt-outs: `--no-fetch` (CSV-only), `--no-strict-match` (allow title-similarity matches), `--no-require-shipping` (keep price-less/shipping-less offers). Set `FETCH_READ_PRICES=false` for URLs-only.
 - `uv sync --extra playwright && uv run playwright install chromium` — JS/Cloudflare-page fallback (enable with `PDP_PLAYWRIGHT_ENABLED=true`)
 - `uv run pytest` — Run all tests
 - `uv run pytest tests/unit/` — Run unit tests only
@@ -97,11 +98,23 @@ EnhancedPipeline (async) ── per product ──→ MatchingPipeline.match_one
                                               ↓
                                   (--verify-pdp) PdpVerifier  → verified [MatchCandidate]
                                               ↓
+                    (--require-shipping) keep_complete_offers → complete-only [MatchResult]
+                                              ↓
                               [MatchResult] → LandscapeCsvWriter → output.csv (+_summary +_stats)
 ```
 
-The default CSV-only path (no `--fetch`/`--verify-pdp`) is **byte-for-byte unchanged**:
-it skips `EnhancedPipeline` and calls `MatchingPipeline.run` directly.
+The online pipeline (`--fetch`, on by default) runs `EnhancedPipeline`. The opt-in
+CSV-only path (`--no-fetch --competitors <file>`) skips `EnhancedPipeline` and calls
+`MatchingPipeline.run` directly — its matching output is **byte-for-byte unchanged**
+from the legacy behaviour.
+
+**Completeness filter (opt-in, `--require-shipping`)** — `output/completeness_filter.py`:
+`keep_complete_offers` drops every candidate whose offer lacks a price *or* a shipping
+cost (free/`0` counts as known), so the output holds only offers with a certain landed
+cost. It recomputes `best_match` among the survivors (highest confidence, else `None`);
+a product left with no complete offer becomes unmatched (placeholder row). Pure and
+non-mutating — applied to `[MatchResult]` just before the writer. Since shipping is read
+only by the PDP cascade, pair it with `--verify-pdp`.
 
 ## Code Conventions
 

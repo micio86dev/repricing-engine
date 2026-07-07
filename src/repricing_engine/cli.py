@@ -20,6 +20,7 @@ from repricing_engine.matching.pipeline import MatchingPipeline
 from repricing_engine.models.enums import Market
 from repricing_engine.normalization.market import detect_market
 from repricing_engine.orchestration.enhanced_pipeline import EnhancedPipeline
+from repricing_engine.output.completeness_filter import keep_complete_offers
 from repricing_engine.output.landscape_writer import LandscapeCsvWriter
 from repricing_engine.utils.logging import setup_logging
 
@@ -76,8 +77,12 @@ def match(
     min_confidence: Annotated[float, typer.Option(help="Minimum confidence threshold")] = 0.60,
     fetch: Annotated[
         bool,
-        typer.Option("--fetch", help="Discover more competitors via free search providers"),
-    ] = False,
+        typer.Option(
+            "--fetch/--no-fetch",
+            help="Discover competitors online via free/cheap providers (default: on). "
+            "Use --no-fetch for a CSV-only run against --competitors.",
+        ),
+    ] = True,
     verify_pdp: Annotated[
         bool,
         typer.Option("--verify-pdp", help="Visit product pages to confirm IDs and real prices"),
@@ -88,14 +93,32 @@ def match(
     strict_match: Annotated[
         bool,
         typer.Option(
-            "--strict-match",
+            "--strict-match/--no-strict-match",
             help="Keep only offers proven to be the same product (EAN/GTIN/SKU or a "
-            "PDP identifier hit); drop title-similarity ('snippet') matches",
+            "PDP identifier hit); drop title-similarity ('snippet') matches (default: on).",
         ),
-    ] = False,
+    ] = True,
+    require_shipping: Annotated[
+        bool,
+        typer.Option(
+            "--require-shipping/--no-require-shipping",
+            help="Keep only offers with a known price AND shipping cost (free/0 counts); "
+            "drop offers whose landed cost is uncertain (default: on). "
+            "Use --no-require-shipping to keep price-less/shipping-less offers.",
+        ),
+    ] = True,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Verbose logging")] = False,
 ) -> None:
-    """Match a catalog against competitor products and write a results CSV."""
+    """Match a catalog against competitors and write a results CSV.
+
+    By default this runs the full online pipeline: it discovers competitors via
+    the configured providers (--fetch), reads each offer's real price and shipping
+    from its product page, keeps only offers proven to be the same product
+    (--strict-match), and drops any offer without a known price AND shipping cost
+    (--require-shipping). Stock quantity/status is captured when available but never
+    required. Use --no-fetch / --no-strict-match / --no-require-shipping to loosen,
+    e.g. `--no-fetch --competitors file.csv` for an offline CSV-only run.
+    """
     settings = Settings()
     setup_logging("DEBUG" if verbose else settings.log_level)
 
@@ -137,6 +160,14 @@ def match(
             )
         else:
             results = pipeline.run(catalog_products, csv_pool)
+        if require_shipping:
+            if not (fetch or verify_pdp):
+                console.print(
+                    "[yellow]--require-shipping without --fetch/--verify-pdp: shipping is read "
+                    "from product pages, so offers lacking a CSV shipping value will be "
+                    "dropped and many products may end up with no offers.[/yellow]"
+                )
+            results = keep_complete_offers(results)
         stats = LandscapeCsvWriter().write(results, output)
     except RepricingError as exc:
         console.print(f"[red]Error:[/red] {exc}")
