@@ -16,6 +16,7 @@ from repricing_engine.sources.deduplicator import deduplicate
 from repricing_engine.sources.enrichment import confirm_identifiers
 from repricing_engine.sources.mapper import to_competitor_product
 from repricing_engine.sources.providers.duckduckgo import DuckDuckGoProvider
+from repricing_engine.sources.providers.ebay import EbaySourceProvider
 from repricing_engine.sources.providers.searxng import SearXNGProvider
 from repricing_engine.sources.providers.trovaprezzi import TrovaPrezziProvider
 
@@ -86,6 +87,17 @@ class SourceFetcher:
                 timeout_seconds=settings.pdp_fetch_timeout_seconds,
             ),
         ]
+        # eBay is only wired in when explicitly enabled *and* both OAuth credentials
+        # are present, so the default free path stays inert without any keys.
+        if settings.ebay_enabled and settings.ebay_client_id and settings.ebay_client_secret:
+            providers.append(
+                EbaySourceProvider(
+                    client,
+                    settings.ebay_client_id,
+                    settings.ebay_client_secret,
+                    timeout_seconds=settings.pdp_fetch_timeout_seconds,
+                )
+            )
         return cls(providers)
 
     @property
