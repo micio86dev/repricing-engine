@@ -109,7 +109,7 @@ product page is then read for the real price/shipping/stock.
 |---|---|---|
 | **SearXNG** (self-hosted) | competitor URLs | Primary discovery; aggregates Google/Bing/Brave/Qwant/… server-side. Free via `docker compose up -d`. |
 | **eBay Browse API** | offers with **price + shipping + quantity** natively | Official, free tier (~5k calls/day). Set `EBAY_ENABLED=true` + a Production keyset. |
-| **TrovaPrezzi** | IT comparison offers (price + shipping) | IT-only; often Cloudflare-blocked on plain HTTP (SearXNG surfaces its URLs). |
+| **TrovaPrezzi** | IT comparison offers (price + shipping) | IT-only; **DataDome-protected** — server-side scraping is blocked (403/404 + a `datadome` cookie). Reach it via a partner **merchant feed** (`FEED_URLS`), not scraping. |
 | **DuckDuckGo** | competitor URLs | HTML-endpoint SERP fallback; per-IP rate-limited. |
 | **CSV file** | your existing competitor export | The `--competitors` OxyLabs/CSV pool. |
 | **Groq (Llama)** | AI match-gate + last-resort PDP extraction | Free tier; skip with `--skip-ai`. |

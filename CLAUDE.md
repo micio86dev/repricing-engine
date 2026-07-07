@@ -46,8 +46,9 @@ concurrently then deduplicated:
   It aggregates Google/Bing/Brave/Qwant/... server-side, so it reaches Cloudflare-protected
   retailers a plain scraper can't. Each product is queried with several strategies — quoted SKU,
   a *valid* EAN/GTIN, brand+title, title — over the first `SEARXNG_MAX_PAGES` result pages.
-- **TrovaPrezzi** (IT-only public price-comparison pages; bs4, AI fallback; often Cloudflare-blocked
-  on plain httpx — SearXNG surfaces its URLs instead, then PDP reads the price).
+- **TrovaPrezzi** (IT-only public price-comparison pages; bs4, AI fallback; **DataDome-protected** —
+  server-side httpx is blocked with a 403/404 + `datadome` cookie, and its PDP pages block the PDP
+  read too, so it contributes ~nothing via scraping. Reach it via a partner merchant feed instead).
 - **DuckDuckGo** (free HTML-endpoint SERP fallback, per-instance rate-limited; brand+title and
   quoted-SKU queries).
 - **CSV file** (`CsvFileProvider` wrapping `OxyLabsIngestor`).
