@@ -24,6 +24,7 @@ from repricing_engine.normalization.identifiers import normalize_ean, normalize_
 from repricing_engine.normalization.price import parse_price_loose
 from repricing_engine.sources.base import COST_FREE, DEFAULT_USER_AGENT, BaseSourceProvider
 from repricing_engine.sources.models import RawSearchResult
+from repricing_engine.sources.query import brand_title_query
 from repricing_engine.sources.snippet_price import extract_price_from_text
 
 if TYPE_CHECKING:
@@ -136,7 +137,7 @@ class SearXNGProvider(BaseSourceProvider):
         if valid_id:
             queries.append(f'"{valid_id}"')
 
-        broad = " ".join(part for part in (brand, product.title) if part).strip()
+        broad = brand_title_query(product)
         if broad:
             queries.append(broad)
 

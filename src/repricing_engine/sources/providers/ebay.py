@@ -25,6 +25,7 @@ from repricing_engine.normalization.identifiers import normalize_ean, normalize_
 from repricing_engine.normalization.price import parse_price_loose
 from repricing_engine.sources.base import COST_FREE, BaseSourceProvider
 from repricing_engine.sources.models import RawSearchResult
+from repricing_engine.sources.query import brand_title_query
 
 if TYPE_CHECKING:
     from decimal import Decimal
@@ -144,9 +145,7 @@ class EbaySourceProvider(BaseSourceProvider):
         valid_id = normalize_ean(product.ean) or normalize_gtin(product.gtin)
         if valid_id:
             return {"filter": f"gtin:{valid_id}", "limit": limit}
-        brand = (product.brand or "").strip()
-        keywords = " ".join(part for part in (brand, product.title) if part).strip()
-        query = keywords or (product.sku or "").strip()
+        query = brand_title_query(product) or (product.sku or "").strip()
         if not query:
             return None
         return {"q": query, "limit": limit}
