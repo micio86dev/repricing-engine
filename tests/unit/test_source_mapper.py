@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from repricing_engine.models.enums import Availability, Market
+from repricing_engine.models.enums import Availability, Market, ShippingSource
 from repricing_engine.sources.mapper import to_competitor_product
 from repricing_engine.sources.models import RawSearchResult
 
@@ -50,3 +50,32 @@ class TestMapper:
         first = to_competitor_product(_result(), Market.IT)
         second = to_competitor_product(_result(), Market.IT)
         assert first.source_id == second.source_id
+
+    def test_new_fields_default_none(self):
+        competitor = to_competitor_product(_result(), Market.IT)
+        assert competitor.stock_quantity is None
+        assert competitor.shipping_source is None
+
+
+class TestShippingProvenanceStamping:
+    def test_feed_provider_stamps_feed(self):
+        result = _result(source_provider="feed", shipping_cost=Decimal("4.90"))
+        competitor = to_competitor_product(result, Market.IT)
+        assert competitor.shipping_source is ShippingSource.FEED
+
+    def test_api_provider_stamps_api(self):
+        for provider in ("ebay", "dataforseo", "serper", "keepa"):
+            result = _result(source_provider=provider, shipping_cost=Decimal("0"))
+            competitor = to_competitor_product(result, Market.IT)
+            assert competitor.shipping_source is ShippingSource.API
+
+    def test_serp_provider_with_shipping_leaves_source_none(self):
+        # A metasearch provider is neither feed nor a structured API.
+        result = _result(source_provider="searxng", shipping_cost=Decimal("5.00"))
+        competitor = to_competitor_product(result, Market.IT)
+        assert competitor.shipping_source is None
+
+    def test_no_shipping_cost_leaves_source_none(self):
+        result = _result(source_provider="feed")  # feed but no shipping figure
+        competitor = to_competitor_product(result, Market.IT)
+        assert competitor.shipping_source is None

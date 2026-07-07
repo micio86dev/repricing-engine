@@ -57,6 +57,8 @@ RAW_COLUMNS: tuple[str, ...] = (
     "source_provider",
     "extraction_method",
     "shipping_note",
+    "competitor_stock_qty",
+    "shipping_source",
 )
 # Derived per-product summary columns.
 SUMMARY_COLUMNS: tuple[str, ...] = (
@@ -186,6 +188,12 @@ class LandscapeCsvWriter:
                         candidate.match_details.get("extraction_method") or ""
                     ),
                     "shipping_note": _shipping_note(competitor.shipping_cost),
+                    "competitor_stock_qty": (
+                        "" if competitor.stock_quantity is None else str(competitor.stock_quantity)
+                    ),
+                    "shipping_source": (
+                        competitor.shipping_source.value if competitor.shipping_source else ""
+                    ),
                 }
             )
             rows.append(row)

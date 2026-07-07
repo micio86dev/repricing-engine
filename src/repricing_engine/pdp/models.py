@@ -60,6 +60,7 @@ class PdpExtractionResult(BaseModel):
     price: Decimal | None = None
     currency: str | None = None
     shipping_cost: Decimal | None = None
+    stock_quantity: int | None = None
     availability: Availability = Availability.UNKNOWN
     seller: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)

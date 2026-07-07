@@ -220,7 +220,23 @@ class IdentifierFinder:
             shipping = self._shipping_from_offer(offer)
             if shipping is not None:
                 normalized["shipping"] = shipping
+            stock = self._stock_from_offer(offer)
+            if stock is not None:
+                normalized["stock_quantity"] = stock
         return normalized
+
+    @staticmethod
+    def _stock_from_offer(offer: dict[str, Any]) -> str | None:
+        """Read a stock quantity from a schema.org Offer's ``inventoryLevel``.
+
+        ``inventoryLevel`` may be a ``QuantitativeValue`` (its ``value`` holds the
+        count) or a bare number. Returns the count as a string (like the other
+        normalized JSON-LD values), or ``None`` when the offer carries no stock.
+        """
+        level = offer.get("inventoryLevel")
+        if isinstance(level, dict):
+            level = level.get("value")
+        return str(level) if level is not None else None
 
     @staticmethod
     def _shipping_from_offer(offer: dict[str, Any]) -> str | None:

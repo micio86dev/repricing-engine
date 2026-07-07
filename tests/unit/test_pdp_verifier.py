@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import httpx
 
-from repricing_engine.models.enums import Availability, Market, MatchMethod
+from repricing_engine.models.enums import Availability, Market, MatchMethod, ShippingSource
 from repricing_engine.models.match_result import MatchResult
 from repricing_engine.models.product import CatalogProduct, CompetitorProduct, MatchCandidate
 from repricing_engine.pdp.fetcher import PageFetcher
@@ -223,6 +223,79 @@ class TestShippingExtraction:
             verifier = _verifier(client)
             verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
         assert verified[0].competitor_product.shipping_cost == Decimal("6.90")
+
+
+_JSONLD_WITH_STOCK = f"""
+<html><head><script type="application/ld+json">
+{{"@type":"Product","sku":"APL-IPH13-128","gtin13":"4006381333931",
+ "offers":{{"@type":"Offer","price":"211.75","priceCurrency":"EUR",
+   "inventoryLevel":{{"@type":"QuantitativeValue","value":"6"}}}}}}
+</script></head><body>iPhone{_PAD}</body></html>
+"""
+
+_TEXT_STOCK_HTML = f"""
+<html><body><h1>Prodotto</h1><p>Solo 3 pezzi disponibili</p>
+<script type="application/ld+json">{{"@type":"Product","sku":"APL-IPH13-128",
+"offers":{{"@type":"Offer","price":"239.00","priceCurrency":"EUR"}}}}</script>{_PAD}</body></html>
+"""
+
+_NO_SHIPPING_HTML = f"""
+<html><body><h1>Prodotto</h1>
+<script type="application/ld+json">{{"@type":"Product","sku":"APL-IPH13-128",
+"offers":{{"@type":"Offer","price":"239.00","priceCurrency":"EUR"}}}}</script>{_PAD}</body></html>
+"""
+
+
+class TestStockExtraction:
+    def test_extraction_result_stock_defaults_none(self):
+        assert PdpExtractionResult().stock_quantity is None
+
+    async def test_reads_stock_from_json_ld_inventory_level(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_JSONLD_WITH_STOCK))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        assert verified[0].competitor_product.stock_quantity == 6
+
+    async def test_reads_stock_from_page_text(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_TEXT_STOCK_HTML))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        assert verified[0].competitor_product.stock_quantity == 3
+
+
+class TestShippingProvenance:
+    async def test_page_shipping_is_stamped_page(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_JSONLD_WITH_SHIPPING))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        offer = verified[0].competitor_product
+        assert offer.shipping_cost == Decimal("8.53")
+        assert offer.shipping_source is ShippingSource.PAGE
+
+    async def test_free_shipping_rule_applies_when_page_silent(self, mock_async_client):
+        # climaprice.it is a curated free-shipping domain and the page states no
+        # shipping -> the rule stamps 0 + RULE.
+        client = mock_async_client(lambda request: httpx.Response(200, text=_NO_SHIPPING_HTML))
+        async with client:
+            verifier = _verifier(client)
+            candidate = _candidate(url="https://www.climaprice.it/p")
+            verified = await verifier.verify_candidates(_catalog(), [candidate], 15)
+        offer = verified[0].competitor_product
+        assert offer.shipping_cost == Decimal("0")
+        assert offer.shipping_source is ShippingSource.RULE
+
+    async def test_rule_does_not_apply_to_unlisted_domain(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_NO_SHIPPING_HTML))
+        async with client:
+            verifier = _verifier(client)
+            candidate = _candidate(url="https://www.unknown-shop.it/p")
+            verified = await verifier.verify_candidates(_catalog(), [candidate], 15)
+        offer = verified[0].competitor_product
+        assert offer.shipping_cost is None
+        assert offer.shipping_source is None
 
 
 def _gtin_page(gtin: str, sku: str = "APL-IPH13-128") -> str:

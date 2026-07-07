@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
-from repricing_engine.models.enums import Availability, Market, MatchMethod
+from repricing_engine.models.enums import Availability, Market, MatchMethod, ShippingSource
 from repricing_engine.models.match_result import MatchResult
 from repricing_engine.models.product import (
     CatalogProduct,
@@ -19,7 +19,15 @@ from repricing_engine.output.landscape_writer import (
 )
 
 
-def _candidate(seller: str, price: str, shipping: str | None, availability: Availability):
+def _candidate(
+    seller: str,
+    price: str,
+    shipping: str | None,
+    availability: Availability,
+    *,
+    stock: int | None = None,
+    shipping_source: ShippingSource | None = None,
+):
     competitor = CompetitorProduct(
         source="organica",
         source_id=seller,
@@ -30,6 +38,8 @@ def _candidate(seller: str, price: str, shipping: str | None, availability: Avai
         market=Market.IT,
         brand="Acme",
         shipping_cost=None if shipping is None else Decimal(shipping),
+        shipping_source=shipping_source,
+        stock_quantity=stock,
         availability=availability,
         seller=seller,
         scraped_at="2026-06-15",
@@ -91,6 +101,36 @@ class TestLandscapeWriter:
         assert first["match_field"] == "sku"
         assert first["source"] == "organica"
         assert first["scraped_at"] == "2026-06-15"
+
+    def test_emits_stock_qty_and_shipping_source_columns(self, tmp_path: Path):
+        catalog = CatalogProduct(
+            sku="SKU1", brand="Acme", title="Widget", category="Misc", market=Market.IT
+        )
+        offer = _candidate(
+            "gamma",
+            "80.00",
+            "0.00",
+            Availability.IN_STOCK,
+            stock=5,
+            shipping_source=ShippingSource.RULE,
+        )
+        result = MatchResult(catalog_product=catalog, best_match=offer, all_candidates=[offer])
+        out = tmp_path / "results.csv"
+        LandscapeCsvWriter().write([result], out)
+        frame = _read(out)
+        assert "competitor_stock_qty" in frame.columns
+        assert "shipping_source" in frame.columns
+        first = frame.row(0, named=True)
+        assert first["competitor_stock_qty"] == "5"
+        assert first["shipping_source"] == "rule"
+
+    def test_missing_stock_and_source_are_blank(self, tmp_path: Path):
+        out = tmp_path / "results.csv"
+        LandscapeCsvWriter().write([_matched()], out)
+        first = _read(out).row(0, named=True)
+        # An unset field reads back as an empty string or null (polars); never a value.
+        assert first["competitor_stock_qty"] in ("", None)
+        assert first["shipping_source"] in ("", None)
 
     def test_summary_min_median_position(self, tmp_path: Path):
         out = tmp_path / "results.csv"
