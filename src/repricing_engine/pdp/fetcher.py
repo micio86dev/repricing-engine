@@ -15,7 +15,7 @@ import logging
 from collections import defaultdict
 from time import monotonic, perf_counter
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -63,6 +63,7 @@ class PageFetcher:
         max_concurrent: int = 8,
         rate_limit_per_domain_seconds: float = 1.0,
         playwright_enabled: bool = False,
+        unblocker_url_template: str | None = None,
     ) -> None:
         """Create the fetcher.
 
@@ -72,11 +73,17 @@ class PageFetcher:
             max_concurrent: Global cap on simultaneous fetches.
             rate_limit_per_domain_seconds: Minimum delay between hits to a domain.
             playwright_enabled: Enable the Playwright JS-rendering fallback.
+            unblocker_url_template: Optional anti-bot unblocker endpoint with a
+                ``{url}`` placeholder (e.g. ZenRows/ScrapingBee/ScraperAPI). When
+                set, the httpx GET is routed through it with the target URL
+                url-encoded in place of ``{url}``; DataDome/Cloudflare-protected
+                shops become readable without changing any provider code.
         """
         self._client = client
         self._timeout = timeout_seconds
         self._rate_limit = rate_limit_per_domain_seconds
         self._playwright_enabled = playwright_enabled
+        self._unblocker_url_template = unblocker_url_template
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._domain_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._domain_last_at: dict[str, float] = {}
@@ -98,12 +105,13 @@ class PageFetcher:
             return await self._fetch_playwright(url)
 
     async def _fetch_httpx(self, url: str, market: Market | None) -> FetchResult:
-        """Tier 1: a plain httpx GET."""
+        """Tier 1: a plain httpx GET (optionally via an anti-bot unblocker)."""
         headers = self._headers(market)
+        request_url = self._request_url(url)
         start = perf_counter()
         try:
             response = await self._client.get(
-                url,
+                request_url,
                 headers=headers,
                 timeout=self._timeout,
                 follow_redirects=True,
@@ -157,6 +165,12 @@ class PageFetcher:
             response_time_ms=round(elapsed_ms, 3),
             ok=len(html) >= _MIN_HTML_BYTES,
         )
+
+    def _request_url(self, url: str) -> str:
+        """Route ``url`` through the configured unblocker endpoint, if any."""
+        if not self._unblocker_url_template:
+            return url
+        return self._unblocker_url_template.replace("{url}", quote(url, safe=""))
 
     def _headers(self, market: Market | None) -> Mapping[str, str]:
         """Build request headers with a rotating UA + market Accept-Language."""

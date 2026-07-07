@@ -44,6 +44,31 @@ class TestPageFetcher:
         assert result.ok is False
         assert result.html == ""
 
+    async def test_unblocker_template_routes_the_request_through_the_unblocker(
+        self, mock_async_client
+    ):
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return httpx.Response(200, text=_BIG_HTML)
+
+        client = mock_async_client(handler)
+        async with client:
+            fetcher = PageFetcher(
+                client,
+                rate_limit_per_domain_seconds=0.0,
+                unblocker_url_template="https://api.unblock.test/?apikey=K&url={url}",
+            )
+            result = await fetcher.fetch("https://shop.it/p?a=1", market=Market.IT)
+        assert result.ok is True
+        # The offer's own URL is preserved for downstream use...
+        assert result.url == "https://shop.it/p?a=1"
+        # ...but the actual request went through the unblocker with the target encoded.
+        assert seen["url"].startswith("https://api.unblock.test/?apikey=K&url=")
+        assert "shop.it" in seen["url"]
+        assert "%3A%2F%2F" in seen["url"] or "https%3A" in seen["url"]  # url-encoded target
+
     async def test_playwright_fallback_unavailable_degrades(self, mock_async_client, fixture_text):
         # httpx returns an unusable (tiny) body; Playwright is enabled but not
         # installed in the test env, so the fallback degrades to ok=False.

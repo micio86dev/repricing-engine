@@ -204,7 +204,7 @@ async def _run_enhanced(
     strict_match: bool = False,
 ) -> list[MatchResult]:
     """Run the async fetch/verify pipeline within a shared HTTP client lifecycle."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(proxy=settings.pdp_proxy_url or None) as client:
         enhanced = EnhancedPipeline.build(
             settings,
             client,

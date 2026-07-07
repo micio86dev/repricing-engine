@@ -96,6 +96,7 @@ class PdpVerifier:
             max_concurrent=settings.pdp_max_concurrent_fetches,
             rate_limit_per_domain_seconds=settings.pdp_rate_limit_per_domain_seconds,
             playwright_enabled=settings.pdp_playwright_enabled,
+            unblocker_url_template=settings.pdp_unblocker_url_template,
         )
         return cls(
             fetcher,
