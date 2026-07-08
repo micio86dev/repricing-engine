@@ -45,6 +45,7 @@ class IdentifierFinder:
         haystacks = self._haystacks(soup, html)
         json_ld = self._parse_json_ld(soup)
         meta_price, meta_currency = self._price_from_meta_microdata(soup)
+        meta_shipping = self._shipping_from_meta_microdata(soup)
 
         found: list[str] = []
         ean_found = self._contains_identifier(catalog_product.ean, haystacks, json_ld)
@@ -66,6 +67,7 @@ class IdentifierFinder:
             json_ld_data=json_ld,
             meta_price=meta_price,
             meta_currency=meta_currency,
+            meta_shipping=meta_shipping,
         )
 
     # OpenGraph / product price meta — page-level and reliable. We deliberately avoid
@@ -80,12 +82,22 @@ class IdentifierFinder:
         {"property": "product:price:currency"},
         {"property": "og:price:currency"},
     )
+    # Page-level shipping meta (rare but reliable when present).
+    _META_SHIPPING_ATTRS: tuple[dict[str, str], ...] = (
+        {"property": "product:shipping:amount"},
+        {"property": "product:shipping_cost:amount"},
+        {"property": "og:shipping:amount"},
+    )
 
     def _price_from_meta_microdata(self, soup: BeautifulSoup) -> tuple[str | None, str | None]:
         """Read a price/currency from OpenGraph/product ``<meta>`` tags (free, reliable)."""
         price = self._meta_content(soup, self._META_PRICE_ATTRS)
         currency = self._meta_content(soup, self._META_CURRENCY_ATTRS)
         return price, (currency.upper() if currency else None)
+
+    def _shipping_from_meta_microdata(self, soup: BeautifulSoup) -> str | None:
+        """Read a shipping cost from OpenGraph/product ``<meta>`` tags, if present."""
+        return self._meta_content(soup, self._META_SHIPPING_ATTRS)
 
     @staticmethod
     def _meta_content(soup: BeautifulSoup, attr_sets: tuple[dict[str, str], ...]) -> str | None:
@@ -208,7 +220,49 @@ class IdentifierFinder:
             shipping = self._shipping_from_offer(offer)
             if shipping is not None:
                 normalized["shipping"] = shipping
+            stock = self._stock_from_offer(offer)
+            if stock is not None:
+                normalized["stock_quantity"] = stock
+            vat_included = self._vat_included_from_offer(offer)
+            if vat_included is not None:
+                normalized["vat_included"] = vat_included
         return normalized
+
+    @staticmethod
+    def _vat_included_from_offer(offer: dict[str, Any]) -> str | None:
+        """Read schema.org ``valueAddedTaxIncluded`` from an Offer or its price spec.
+
+        The flag may sit on the Offer directly or inside its ``priceSpecification``
+        (a dict or a list of them). Returns it as the lowercase string ``"true"`` /
+        ``"false"`` (mirroring the other normalized JSON-LD values), or ``None`` when
+        the offer does not state it. Accepts a JSON bool or a bool-like string.
+        """
+        value = offer.get("valueAddedTaxIncluded")
+        if value is None:
+            spec = offer.get("priceSpecification")
+            if isinstance(spec, list):
+                spec = next((s for s in spec if isinstance(s, dict)), None)
+            if isinstance(spec, dict):
+                value = spec.get("valueAddedTaxIncluded")
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        text = str(value).strip().casefold()
+        return text if text in ("true", "false") else None
+
+    @staticmethod
+    def _stock_from_offer(offer: dict[str, Any]) -> str | None:
+        """Read a stock quantity from a schema.org Offer's ``inventoryLevel``.
+
+        ``inventoryLevel`` may be a ``QuantitativeValue`` (its ``value`` holds the
+        count) or a bare number. Returns the count as a string (like the other
+        normalized JSON-LD values), or ``None`` when the offer carries no stock.
+        """
+        level = offer.get("inventoryLevel")
+        if isinstance(level, dict):
+            level = level.get("value")
+        return str(level) if level is not None else None
 
     @staticmethod
     def _shipping_from_offer(offer: dict[str, Any]) -> str | None:

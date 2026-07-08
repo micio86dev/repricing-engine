@@ -11,11 +11,13 @@ import hashlib
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from repricing_engine.models.enums import Availability, Market
+from repricing_engine.models.enums import Availability, Market, ShippingSource
 from repricing_engine.models.product import CompetitorProduct
 from repricing_engine.normalization.identifiers import normalize_ean, normalize_gtin, normalize_sku
 
 if TYPE_CHECKING:
+    from decimal import Decimal
+
     from repricing_engine.sources.models import RawSearchResult
 
 # Currency assumed per market when a result carries none.
@@ -24,6 +26,27 @@ _MARKET_CURRENCY: dict[Market, str] = {
     Market.US: "USD",
 }
 _DEFAULT_CURRENCY = "EUR"
+
+# Providers whose shipping figure is a plain feed column vs. a structured API.
+_FEED_PROVIDERS: frozenset[str] = frozenset({"feed"})
+_API_PROVIDERS: frozenset[str] = frozenset({"ebay", "dataforseo", "serper", "keepa"})
+
+
+def _shipping_source(provider: str, shipping_cost: Decimal | None) -> ShippingSource | None:
+    """Derive the shipping provenance from the producing provider, if any.
+
+    Only a result that actually carries a shipping cost gets a provenance stamp:
+    ``FEED`` for a feed column, ``API`` for a structured marketplace API, else
+    ``None`` (an unpriced SERP snippet has no shipping to attribute).
+    """
+    if shipping_cost is None:
+        return None
+    name = provider.lower()
+    if name in _FEED_PROVIDERS:
+        return ShippingSource.FEED
+    if name in _API_PROVIDERS:
+        return ShippingSource.API
+    return None
 
 
 def _domain(url: str) -> str:
@@ -70,6 +93,7 @@ def to_competitor_product(result: RawSearchResult, market: Market) -> Competitor
         sku=_normalized_sku(result.sku),
         brand=result.brand,  # set only when confirmed against the catalog (see enrichment)
         shipping_cost=result.shipping_cost,
+        shipping_source=_shipping_source(result.source_provider, result.shipping_cost),
         availability=Availability.UNKNOWN,
         seller=result.domain or _domain(result.url) or None,
         source_provider=result.source_provider,

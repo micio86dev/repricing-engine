@@ -79,3 +79,75 @@ class TestIdentifierFinder:
         )
         findings = IdentifierFinder().find_identifiers(html, _catalog())
         assert findings.json_ld_data["sku"] == "APL-IPH13-128"
+
+    def test_reads_inventory_level_quantitative_value(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"99.00","priceCurrency":"EUR","inventoryLevel":'
+            '{"@type":"QuantitativeValue","value":"7"}}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert findings.json_ld_data["stock_quantity"] == "7"
+
+    def test_reads_numeric_inventory_level(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"99.00","priceCurrency":"EUR","inventoryLevel":4}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert findings.json_ld_data["stock_quantity"] == "4"
+
+    def test_no_inventory_level_omits_stock(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"99.00","priceCurrency":"EUR"}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert "stock_quantity" not in findings.json_ld_data
+
+    def test_reads_vat_included_true_bool(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"211.75","priceCurrency":"EUR","valueAddedTaxIncluded":true}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert findings.json_ld_data["vat_included"] == "true"
+
+    def test_reads_vat_included_false_bool(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"239.00","priceCurrency":"EUR","valueAddedTaxIncluded":false}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert findings.json_ld_data["vat_included"] == "false"
+
+    def test_reads_vat_included_from_price_specification(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"priceSpecification":{"@type":"PriceSpecification","price":"211.75",'
+            '"priceCurrency":"EUR","valueAddedTaxIncluded":true}}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert findings.json_ld_data["vat_included"] == "true"
+
+    def test_no_vat_flag_omits_key(self):
+        html = (
+            '<html><head><script type="application/ld+json">'
+            '{"@type":"Product","sku":"APL-IPH13-128","offers":{"@type":"Offer",'
+            '"price":"99.00","priceCurrency":"EUR"}}'
+            "</script></head><body>x</body></html>"
+        )
+        findings = IdentifierFinder().find_identifiers(html, _catalog())
+        assert "vat_included" not in findings.json_ld_data

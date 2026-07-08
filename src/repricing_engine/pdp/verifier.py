@@ -18,19 +18,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import Counter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from repricing_engine.matching.scoring import select_best
-from repricing_engine.models.enums import Availability
+from repricing_engine.models.enums import Availability, ShippingSource
 from repricing_engine.normalization.availability import normalize_availability
 from repricing_engine.normalization.identifiers import normalize_ean, normalize_gtin
-from repricing_engine.normalization.price import parse_price_loose
+from repricing_engine.normalization.price import extract_shipping_from_text, parse_price_loose
+from repricing_engine.normalization.stock import extract_stock_quantity_from_text
 from repricing_engine.pdp.fetcher import PageFetcher
 from repricing_engine.pdp.identifier_finder import IdentifierFinder
 from repricing_engine.pdp.models import PdpExtractionResult
+from repricing_engine.sources.shipping_rules import free_shipping_for
 
 if TYPE_CHECKING:
     import httpx
@@ -43,28 +45,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Free-shipping phrases (IT/EN). We only trust an unconditional promise, so a
-# nearby threshold qualifier ("sopra 99€", "oltre", "a partire da") disqualifies it.
-_FREE_SHIPPING_RE = re.compile(
-    r"(?:spedizione|consegna)\s+(?:gratuita|gratis|gratuite)|free\s+shipping|spedizione\s+inclusa",
-    re.IGNORECASE,
-)
-_SHIPPING_THRESHOLD_RE = re.compile(
-    r"\b(sopra|oltre|a\s+partire|superior|min\.?|from|above)\b|da\s*€", re.IGNORECASE
-)
-
-
-def _has_free_shipping(html: str) -> bool:
-    """True when the page unconditionally promises free shipping (no threshold)."""
-    for match in _FREE_SHIPPING_RE.finditer(html):
-        window = html[match.end() : match.end() + 45]
-        if not _SHIPPING_THRESHOLD_RE.search(window):
-            return True
-    return False
-
-
 # How many SKU-confirmed pages must agree on a GTIN before we adopt it as the EAN.
 _GTIN_CONSENSUS_MIN = 2
+# A stock count at/above this is treated as noise, not a real on-hand quantity.
+_STOCK_MAX = 100_000
 
 
 def _canonical_barcode(value: object) -> str | None:
@@ -73,6 +57,29 @@ def _canonical_barcode(value: object) -> str | None:
         return None
     text = str(value)
     return normalize_gtin(text) or normalize_ean(text)
+
+
+def _stock_int(value: object) -> int | None:
+    """Parse a JSON-LD stock value to a non-negative ``int`` in range, or ``None``."""
+    if value is None:
+        return None
+    try:
+        parsed = int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+    return parsed if 0 <= parsed < _STOCK_MAX else None
+
+
+def _vat_included_bool(value: object) -> bool | None:
+    """Parse a JSON-LD ``vat_included`` flag ("true"/"false") to a bool, or ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip().casefold()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return None
 
 
 class PdpVerifier:
@@ -118,6 +125,7 @@ class PdpVerifier:
             max_concurrent=settings.pdp_max_concurrent_fetches,
             rate_limit_per_domain_seconds=settings.pdp_rate_limit_per_domain_seconds,
             playwright_enabled=settings.pdp_playwright_enabled,
+            unblocker_url_template=settings.pdp_unblocker_url_template,
         )
         return cls(
             fetcher,
@@ -271,10 +279,36 @@ class PdpVerifier:
         if findings.any_found and extraction_method is None:
             extraction_method = "regex"
 
-        # Structured shipping is rare; fall back to a conservative free-shipping scan
-        # so landed price reflects "Spedizione gratis" pages (common on IT shops).
-        if extraction.shipping_cost is None and _has_free_shipping(fetch.html):
+        # Shipping cascade (all free, cheapest signal first): JSON-LD → <meta> →
+        # page text. Structured shipping is rare, so fall back to meta tags, then a
+        # precise text scan reading "Spedizione gratis" (→ 0) or "Spedizione 4,99€".
+        if extraction.shipping_cost is None and findings.meta_shipping is not None:
+            meta_shipping = parse_price_loose(findings.meta_shipping)
+            if meta_shipping is not None:
+                extraction = extraction.model_copy(update={"shipping_cost": meta_shipping})
+        if extraction.shipping_cost is None:
+            text_shipping = extract_shipping_from_text(
+                fetch.html, candidate.competitor_product.market
+            )
+            if text_shipping is not None:
+                extraction = extraction.model_copy(update={"shipping_cost": text_shipping})
+
+        # Provenance: anything read from the page (JSON-LD/meta/text) is PAGE.
+        # Only when the page yields nothing do we fall back to a curated
+        # per-retailer free-shipping rule (RULE), which stamps 0 for a known-free
+        # domain. Otherwise the offer keeps whatever shipping the feed carried.
+        shipping_source: ShippingSource | None = None
+        if extraction.shipping_cost is not None:
+            shipping_source = ShippingSource.PAGE
+        elif free_shipping_for(urlparse(candidate.competitor_product.url).netloc):
             extraction = extraction.model_copy(update={"shipping_cost": Decimal("0")})
+            shipping_source = ShippingSource.RULE
+
+        # Stock quantity (free): prefer JSON-LD, else a precise text scan.
+        if extraction.stock_quantity is None:
+            text_stock = extract_stock_quantity_from_text(fetch.html)
+            if text_stock is not None:
+                extraction = extraction.model_copy(update={"stock_quantity": text_stock})
 
         if self._needs_ai(findings, extraction, candidate):
             ai_result = await self._ai_extractor.extract(fetch.html, catalog_product, fetch.url)
@@ -284,7 +318,9 @@ class PdpVerifier:
                 confirmation = confirmation or "ai"
 
         verified = confirmation is not None
-        updated_offer = self._apply_extraction(candidate.competitor_product, extraction)
+        updated_offer = self._apply_extraction(
+            candidate.competitor_product, extraction, shipping_source=shipping_source
+        )
         details: dict[str, Any] = {
             **candidate.match_details,
             "pdp_verified": verified,
@@ -340,8 +376,10 @@ class PdpVerifier:
             price=parse_price_loose(data.get("price")),
             currency=str(data["currency"]).upper() if data.get("currency") else None,
             shipping_cost=parse_price_loose(data.get("shipping")),
+            stock_quantity=_stock_int(data.get("stock_quantity")),
             availability=normalize_availability(data.get("availability")),
             seller=str(data["seller"]) if data.get("seller") else None,
+            vat_included=_vat_included_bool(data.get("vat_included")),
             confidence=0.9,
         )
 
@@ -349,13 +387,16 @@ class PdpVerifier:
     def _apply_extraction(
         competitor: CompetitorProduct,
         extraction: PdpExtractionResult,
+        *,
+        shipping_source: ShippingSource | None = None,
     ) -> CompetitorProduct:
         """Merge extracted offer data into the competitor offer (never wipes data).
 
         A price is only adopted when it is in the offer's own currency: a foreign
         shop that lists in HUF/SEK/PLN/... is a real page but not a currency-comparable
         competitor, so we keep the offer (URL, confirmation) without mislabeling that
-        number as the market currency.
+        number as the market currency. The extracted stock quantity and the shipping
+        provenance are stamped when present, else the offer's existing values stand.
         """
         availability = (
             extraction.availability
@@ -381,6 +422,17 @@ class PdpVerifier:
                     extraction.shipping_cost
                     if extraction.shipping_cost is not None
                     else competitor.shipping_cost
+                ),
+                "shipping_source": shipping_source or competitor.shipping_source,
+                "vat_included": (
+                    extraction.vat_included
+                    if extraction.vat_included is not None
+                    else competitor.vat_included
+                ),
+                "stock_quantity": (
+                    extraction.stock_quantity
+                    if extraction.stock_quantity is not None
+                    else competitor.stock_quantity
                 ),
                 "availability": availability,
                 "seller": extraction.seller or competitor.seller,

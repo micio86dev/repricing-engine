@@ -29,9 +29,18 @@ class TestCli:
         assert "--catalog" in output
         assert "--skip-ai" in output
 
+    def test_help_exposes_default_on_opt_outs(self):
+        # The full online pipeline is the default; the opt-out flags must be shown.
+        result = runner.invoke(app, ["match", "--help"])
+        output = _plain(result.output)
+        assert "--no-fetch" in output
+        assert "--no-strict-match" in output
+        assert "--no-require-shipping" in output
+
     def test_match_produces_output(
         self, sample_catalog_path: Path, sample_oxylabs_path: Path, tmp_path: Path
     ):
+        # --no-fetch keeps this an offline CSV-only run (tests never hit the network).
         out = tmp_path / "results.csv"
         result = runner.invoke(
             app,
@@ -43,6 +52,8 @@ class TestCli:
                 str(sample_oxylabs_path),
                 "--output",
                 str(out),
+                "--no-fetch",
+                "--no-require-shipping",
                 "--skip-ai",
             ],
         )

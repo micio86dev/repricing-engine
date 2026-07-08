@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     pdp_rate_limit_per_domain_seconds: float = Field(default=1.0, ge=0.0)
     pdp_ai_extraction_enabled: bool = Field(default=True)  # last-resort Groq extraction
     pdp_ai_confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    # Anti-bot scraping (opt-in). A transparent proxy applied to every HTTP call
+    # (residential proxy, e.g. DataImpulse/Webshare/Oxylabs), and/or an unblocker
+    # endpoint with a ``{url}`` placeholder that PDP fetches are routed through
+    # (ZenRows/ScrapingBee/ScraperAPI) to pass DataDome/Cloudflare on tough shops.
+    pdp_proxy_url: str | None = Field(default=None)  # e.g. http://user:pass@host:port
+    pdp_unblocker_url_template: str | None = Field(default=None)  # e.g. ...&url={url}
 
     # ------------------------------------------------------------------ #
     # Paid / at-scale discovery providers (opt-in). All disabled and empty

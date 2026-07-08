@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from repricing_engine.models.enums import Availability, Market, MatchMethod
+from repricing_engine.models.enums import Availability, Market, MatchMethod, ShippingSource
 
 
 class CatalogProduct(BaseModel):
@@ -43,6 +43,9 @@ class CompetitorProduct(BaseModel):
     sku: str | None = None
     brand: str | None = None
     shipping_cost: Decimal | None = None
+    shipping_source: ShippingSource | None = None  # provenance of shipping_cost
+    vat_included: bool | None = None  # whether ``price`` already includes VAT (JSON-LD)
+    stock_quantity: int | None = None  # units the seller reports on hand, if known
     availability: Availability = Availability.UNKNOWN
     seller: str | None = None  # competitor/retailer display name
     source_provider: str | None = None  # the fetch provider (searxng, trovaprezzi, ...)

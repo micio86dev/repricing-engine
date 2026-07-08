@@ -23,13 +23,14 @@ from repricing_engine.matching.classification import (
     match_field_for,
 )
 from repricing_engine.models.enums import Availability
+from repricing_engine.normalization.vat import split_vat, vat_rate_for
 from repricing_engine.output.csv_writer import CsvWriter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from repricing_engine.models.match_result import MatchResult
-    from repricing_engine.models.product import CatalogProduct, MatchCandidate
+    from repricing_engine.models.product import CatalogProduct, CompetitorProduct, MatchCandidate
 
 # Raw offer-level columns (the client-agreed schema).
 RAW_COLUMNS: tuple[str, ...] = (
@@ -43,7 +44,9 @@ RAW_COLUMNS: tuple[str, ...] = (
     "competitor_name",
     "competitor_domain",
     "competitor_url",
-    "competitor_price",
+    "competitor_price",  # ex-VAT (comparison basis)
+    "competitor_vat",
+    "competitor_price_incl_vat",
     "competitor_shipping",
     "competitor_landed",
     "confidence",
@@ -57,6 +60,8 @@ RAW_COLUMNS: tuple[str, ...] = (
     "source_provider",
     "extraction_method",
     "shipping_note",
+    "competitor_stock_qty",
+    "shipping_source",
 )
 # Derived per-product summary columns.
 SUMMARY_COLUMNS: tuple[str, ...] = (
@@ -95,12 +100,30 @@ def _domain(url: str) -> str:
     return netloc[4:] if netloc.startswith("www.") else netloc
 
 
-def _landed(candidate: MatchCandidate) -> Decimal | None:
-    """Shipping-inclusive price of a candidate's offer, or ``None`` if unpriced."""
-    competitor = candidate.competitor_product
+def _vat_amounts(
+    competitor: CompetitorProduct,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Return ``(ex_vat, vat_amount, incl_vat)`` for an offer (all ``None`` if unpriced).
+
+    The comparison basis is the ex-VAT price, so an offer that declares its price
+    VAT-excluded (``vat_included=False``) is taken as-is while a VAT-included one
+    is stripped. An offer that does not state its VAT treatment defaults to
+    VAT-included, matching Italian B2C listings (the catalog's home market).
+    """
     if competitor.price is None:
+        return None, None, None
+    rate = vat_rate_for(competitor.market)
+    included = competitor.vat_included if competitor.vat_included is not None else True
+    return split_vat(competitor.price, included=included, rate=rate)
+
+
+def _landed(candidate: MatchCandidate) -> Decimal | None:
+    """Shipping-inclusive ex-VAT price of a candidate's offer, or ``None`` if unpriced."""
+    competitor = candidate.competitor_product
+    ex_vat, _, _ = _vat_amounts(competitor)
+    if ex_vat is None:
         return None
-    return competitor.price + (competitor.shipping_cost or Decimal("0"))
+    return ex_vat + (competitor.shipping_cost or Decimal("0"))
 
 
 def _landed_sort_key(candidate: MatchCandidate) -> tuple[bool, Decimal]:
@@ -162,6 +185,7 @@ class LandscapeCsvWriter:
         rows: list[dict[str, str]] = []
         for candidate in sorted(result.all_candidates, key=_landed_sort_key):
             competitor = candidate.competitor_product
+            ex_vat, vat_amount, incl_vat = _vat_amounts(competitor)
             landed = _landed(candidate)
             row = dict(base)
             row.update(
@@ -169,7 +193,9 @@ class LandscapeCsvWriter:
                     "competitor_name": competitor.seller or competitor.source,
                     "competitor_domain": _domain(competitor.url),
                     "competitor_url": competitor.url,
-                    "competitor_price": "" if competitor.price is None else _q(competitor.price),
+                    "competitor_price": "" if ex_vat is None else _q(ex_vat),
+                    "competitor_vat": "" if vat_amount is None else _q(vat_amount),
+                    "competitor_price_incl_vat": "" if incl_vat is None else _q(incl_vat),
                     "competitor_shipping": (
                         "" if competitor.shipping_cost is None else _q(competitor.shipping_cost)
                     ),
@@ -186,6 +212,12 @@ class LandscapeCsvWriter:
                         candidate.match_details.get("extraction_method") or ""
                     ),
                     "shipping_note": _shipping_note(competitor.shipping_cost),
+                    "competitor_stock_qty": (
+                        "" if competitor.stock_quantity is None else str(competitor.stock_quantity)
+                    ),
+                    "shipping_source": (
+                        competitor.shipping_source.value if competitor.shipping_source else ""
+                    ),
                 }
             )
             rows.append(row)

@@ -37,6 +37,9 @@ class IdentifierFindings(BaseModel):
     # expose the price only in OpenGraph/itemprop, so more offers get a real price.
     meta_price: str | None = None
     meta_currency: str | None = None
+    # Shipping cost found in <meta> tags (not JSON-LD): a free fallback for pages
+    # exposing shipping only in OpenGraph/product meta.
+    meta_shipping: str | None = None
 
     @property
     def any_found(self) -> bool:
@@ -57,6 +60,8 @@ class PdpExtractionResult(BaseModel):
     price: Decimal | None = None
     currency: str | None = None
     shipping_cost: Decimal | None = None
+    stock_quantity: int | None = None
     availability: Availability = Availability.UNKNOWN
     seller: str | None = None
+    vat_included: bool | None = None  # schema.org valueAddedTaxIncluded, if stated
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)

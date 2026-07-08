@@ -28,6 +28,7 @@ from repricing_engine.sources.base import (
     BaseSourceProvider,
 )
 from repricing_engine.sources.models import RawSearchResult
+from repricing_engine.sources.query import brand_title_query
 
 if TYPE_CHECKING:
     from repricing_engine.models.product import CatalogProduct
@@ -90,7 +91,7 @@ class TrovaPrezziProvider(BaseSourceProvider):
             logger.info("TrovaPrezzi only supports the IT market; skipping for %s.", market)
             return []
 
-        query = " ".join(part for part in (product.brand, product.title) if part).strip()
+        query = brand_title_query(product)
         if not query:
             return []
 
