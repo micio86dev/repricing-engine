@@ -11,6 +11,7 @@ from repricing_engine.exceptions import IngestionError
 from repricing_engine.ingestion.base import BaseIngestor, read_csv_rows
 from repricing_engine.models.enums import Market
 from repricing_engine.models.product import CompetitorProduct
+from repricing_engine.normalization.availability import normalize_availability
 from repricing_engine.normalization.identifiers import (
     normalize_ean,
     normalize_gtin,
@@ -35,6 +36,17 @@ class OxyLabsIngestor(BaseIngestor[CompetitorProduct]):
         "price": ("price", "price_value", "current_price"),
         "currency": ("currency", "price_currency"),
         "url": ("url", "product_url", "link"),
+        "availability": (
+            "availability",
+            "stock",
+            "stock_status",
+            "in_stock",
+            "disponibilita",
+            "disponibilità",
+        ),
+        "seller": ("seller", "retailer", "store", "shop", "merchant", "competitor_name"),
+        "source": ("source", "provenance", "channel"),
+        "scraped_at": ("scraped_at", "timestamp", "date", "crawled_at"),
     }
     DEFAULT_CURRENCY = "EUR"
 
@@ -73,10 +85,11 @@ class OxyLabsIngestor(BaseIngestor[CompetitorProduct]):
             currency = (self._first(lowered, "currency") or self.DEFAULT_CURRENCY).strip().upper()
             market = self.default_market
             source_id = self._first(lowered, "source_id") or f"row-{index + 1}"
+            source = (self._first(lowered, "source") or self.SOURCE_NAME).strip().lower()
 
             products.append(
                 CompetitorProduct(
-                    source=self.SOURCE_NAME,
+                    source=source,
                     source_id=source_id,
                     title=title,
                     price=normalize_price(raw_price, currency, market),
@@ -88,6 +101,9 @@ class OxyLabsIngestor(BaseIngestor[CompetitorProduct]):
                     sku=self._normalized_sku(self._first(lowered, "sku")),
                     brand=self._clean_brand(self._first(lowered, "brand")),
                     shipping_cost=extract_shipping(lowered, self.SOURCE_NAME),
+                    availability=normalize_availability(self._first(lowered, "availability")),
+                    seller=self._clean_brand(self._first(lowered, "seller")),
+                    scraped_at=(self._first(lowered, "scraped_at") or None),
                     raw_data=dict(row),
                 )
             )

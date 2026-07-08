@@ -34,3 +34,23 @@ class ConfidenceLevel(StrEnum):
     HIGH = "HIGH"  # > 0.90
     MEDIUM = "MEDIUM"  # 0.70 - 0.90
     LOW = "LOW"  # < 0.70
+
+
+class Availability(StrEnum):
+    """Stock availability of a competitor offer."""
+
+    IN_STOCK = "IN_STOCK"
+    OUT_OF_STOCK = "OUT_OF_STOCK"
+    PREORDER = "PREORDER"
+    UNKNOWN = "UNKNOWN"
+
+
+class ShippingSource(StrEnum):
+    """Provenance of a competitor offer's shipping cost (how it was obtained)."""
+
+    FEED = "feed"  # supplied by a data feed / CSV column
+    RULE = "rule"  # inferred from a curated per-retailer free-shipping rule
+    CART = "cart"  # observed by simulating a cart / checkout
+    API = "api"  # returned by a structured marketplace API (eBay, ...)
+    PAGE = "page"  # read off the product page (JSON-LD / meta / text)
+    ESTIMATE = "estimate"  # heuristically estimated

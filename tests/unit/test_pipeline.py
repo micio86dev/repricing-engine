@@ -79,3 +79,25 @@ class TestMatchingPipeline:
         pipeline = MatchingPipeline(settings, skip_ai=True, encoder=fake_encoder)
         results = pipeline.run([_catalog()], [_competitor()], show_progress=False)
         assert len(results) == 1
+
+    def test_full_landscape_keeps_semantic_only_offers(self, settings, fake_encoder):
+        """A strong match must not suppress other competitors' semantic scoring."""
+        catalog = _catalog()
+        strong = _competitor(source_id="A", ean="4006381333931")  # exact EAN -> 0.95
+        semantic_only = _competitor(
+            source_id="B",
+            ean=None,
+            sku=None,
+            brand=None,
+            title="Apple iPhone 13 Blue",  # same title -> high cosine
+            url="https://other.it/p",
+        )
+        pipeline = MatchingPipeline(settings, skip_ai=True, encoder=fake_encoder)
+
+        # Default (CSV-only) path: legacy global semantic-skip drops B.
+        legacy = pipeline.match_one(catalog, [strong, semantic_only])
+        assert {c.competitor_product.source_id for c in legacy.all_candidates} == {"A"}
+
+        # Landscape path (--fetch): B still gets scored semantically and survives.
+        landscape = pipeline.match_one(catalog, [strong, semantic_only], full_landscape=True)
+        assert {c.competitor_product.source_id for c in landscape.all_candidates} == {"A", "B"}
