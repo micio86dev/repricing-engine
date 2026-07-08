@@ -70,6 +70,18 @@ def _stock_int(value: object) -> int | None:
     return parsed if 0 <= parsed < _STOCK_MAX else None
 
 
+def _vat_included_bool(value: object) -> bool | None:
+    """Parse a JSON-LD ``vat_included`` flag ("true"/"false") to a bool, or ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip().casefold()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return None
+
+
 class PdpVerifier:
     """Verify match candidates by visiting their product pages."""
 
@@ -367,6 +379,7 @@ class PdpVerifier:
             stock_quantity=_stock_int(data.get("stock_quantity")),
             availability=normalize_availability(data.get("availability")),
             seller=str(data["seller"]) if data.get("seller") else None,
+            vat_included=_vat_included_bool(data.get("vat_included")),
             confidence=0.9,
         )
 
@@ -411,6 +424,11 @@ class PdpVerifier:
                     else competitor.shipping_cost
                 ),
                 "shipping_source": shipping_source or competitor.shipping_source,
+                "vat_included": (
+                    extraction.vat_included
+                    if extraction.vat_included is not None
+                    else competitor.vat_included
+                ),
                 "stock_quantity": (
                     extraction.stock_quantity
                     if extraction.stock_quantity is not None

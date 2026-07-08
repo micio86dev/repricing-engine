@@ -44,6 +44,7 @@ class CompetitorProduct(BaseModel):
     brand: str | None = None
     shipping_cost: Decimal | None = None
     shipping_source: ShippingSource | None = None  # provenance of shipping_cost
+    vat_included: bool | None = None  # whether ``price`` already includes VAT (JSON-LD)
     stock_quantity: int | None = None  # units the seller reports on hand, if known
     availability: Availability = Availability.UNKNOWN
     seller: str | None = None  # competitor/retailer display name

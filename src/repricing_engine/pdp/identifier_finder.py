@@ -223,7 +223,33 @@ class IdentifierFinder:
             stock = self._stock_from_offer(offer)
             if stock is not None:
                 normalized["stock_quantity"] = stock
+            vat_included = self._vat_included_from_offer(offer)
+            if vat_included is not None:
+                normalized["vat_included"] = vat_included
         return normalized
+
+    @staticmethod
+    def _vat_included_from_offer(offer: dict[str, Any]) -> str | None:
+        """Read schema.org ``valueAddedTaxIncluded`` from an Offer or its price spec.
+
+        The flag may sit on the Offer directly or inside its ``priceSpecification``
+        (a dict or a list of them). Returns it as the lowercase string ``"true"`` /
+        ``"false"`` (mirroring the other normalized JSON-LD values), or ``None`` when
+        the offer does not state it. Accepts a JSON bool or a bool-like string.
+        """
+        value = offer.get("valueAddedTaxIncluded")
+        if value is None:
+            spec = offer.get("priceSpecification")
+            if isinstance(spec, list):
+                spec = next((s for s in spec if isinstance(s, dict)), None)
+            if isinstance(spec, dict):
+                value = spec.get("valueAddedTaxIncluded")
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        text = str(value).strip().casefold()
+        return text if text in ("true", "false") else None
 
     @staticmethod
     def _stock_from_offer(offer: dict[str, Any]) -> str | None:

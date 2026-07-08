@@ -100,5 +100,7 @@ async def test_fetch_match_verify_to_csv(tmp_path: Path, fixture_text, mock_asyn
     assert first["confirmation_method"] == "PDP·GTIN"
     assert first["source_provider"] == "searxng"
     assert first["extraction_method"] == "json_ld"
-    assert first["competitor_price"] == "789.00"
+    # JSON-LD 789.00 states no VAT flag -> ex-VAT (IT 22% included default) = 646.72.
+    assert first["competitor_price"] == "646.72"
+    assert first["competitor_price_incl_vat"] == "789.00"
     assert stats["offers_pdp_verified"] >= 1

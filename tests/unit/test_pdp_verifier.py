@@ -407,6 +407,51 @@ class TestBarcodeRecovery:
         assert out.catalog_product.ean == "4006381333931"  # unchanged (its own EAN)
 
 
+_JSONLD_VAT_INCLUDED = f"""
+<html><head><script type="application/ld+json">
+{{"@type":"Product","sku":"APL-IPH13-128","gtin13":"4006381333931",
+ "offers":{{"@type":"Offer","price":"211.75","priceCurrency":"EUR",
+   "valueAddedTaxIncluded":true}}}}
+</script></head><body>iPhone{_PAD}</body></html>
+"""
+
+_JSONLD_VAT_EXCLUDED = f"""
+<html><head><script type="application/ld+json">
+{{"@type":"Product","sku":"APL-IPH13-128","gtin13":"4006381333931",
+ "offers":{{"@type":"Offer","price":"239.00","priceCurrency":"EUR",
+   "valueAddedTaxIncluded":false}}}}
+</script></head><body>iPhone{_PAD}</body></html>
+"""
+
+
+class TestVatIncludedStamping:
+    async def test_vat_included_true_stamped(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_JSONLD_VAT_INCLUDED))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        offer = verified[0].competitor_product
+        assert offer.vat_included is True
+        assert offer.price == Decimal("211.75")  # raw price stays on the model
+
+    async def test_vat_excluded_false_stamped(self, mock_async_client):
+        client = mock_async_client(lambda request: httpx.Response(200, text=_JSONLD_VAT_EXCLUDED))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        offer = verified[0].competitor_product
+        assert offer.vat_included is False
+
+    async def test_absent_vat_flag_leaves_none(self, mock_async_client, fixture_text):
+        # pdp_with_jsonld.html states no valueAddedTaxIncluded.
+        html = fixture_text("pdp_with_jsonld.html")
+        client = mock_async_client(lambda request: httpx.Response(200, text=html))
+        async with client:
+            verifier = _verifier(client)
+            verified = await verifier.verify_candidates(_catalog(), [_candidate()], 15)
+        assert verified[0].competitor_product.vat_included is None
+
+
 class TestApplyExtractionCurrency:
     @staticmethod
     def _offer() -> CompetitorProduct:
